@@ -52,7 +52,10 @@ describe('ResponsesClient', () => {
           model: 'gpt-5',
           instructions: 'test',
           input: 'hello',
-          tools: []
+          tools: [],
+          reasoning: {
+            effort: 'high'
+          }
         }
       )
     })
@@ -60,7 +63,7 @@ describe('ResponsesClient', () => {
     expect(received.path).toBe('/responses')
     expect(received.headers.authorization).toBe('Bearer chatgpt-access-token')
     expect(received.headers['chatgpt-account-id']).toBe('account-123')
-    expect(received.body).toMatchObject({ model: 'gpt-5' })
+    expect(received.body).toMatchObject({ model: 'gpt-5', reasoning: { effort: 'high' } })
   })
 
   it('parses streamed Responses events for ChatGPT backend requests', async () => {

@@ -88,6 +88,9 @@ export class AgentRunner {
           instructions,
           input,
           tools: [...this.toolRegistry.schemas(), ...buildConfiguredOpenAiTools(this.options.config)],
+          reasoning: {
+            effort: this.options.config.reasoningEffort
+          },
           store: shouldUseChatGptBackendOptions ? false : undefined,
           stream: shouldUseChatGptBackendOptions ? true : undefined,
           previous_response_id: shouldUsePreviousResponseId(auth) ? this.previousResponseId : undefined,

@@ -1,7 +1,7 @@
 import { Box, Text, render, useApp, useInput } from 'ink'
 import { useMemo, useState } from 'react'
 import { AuthManager, maskSecret } from '../auth/manager.js'
-import type { ApprovalMode, SandboxMode } from '../config/schema.js'
+import type { ApprovalMode, ReasoningEffort, SandboxMode } from '../config/schema.js'
 import { ConfigStore } from '../config/store.js'
 import {
   formatAuthStatus,
@@ -11,11 +11,18 @@ import {
   parseCommaList,
   parsePartialImagesOption
 } from '../command-helpers.js'
-import { APP_VERSION, DEFAULT_AUTH_ISSUER, DEFAULT_MODEL, OAUTH_CLIENT_ID } from '../constants.js'
+import {
+  APP_VERSION,
+  DEFAULT_AUTH_ISSUER,
+  DEFAULT_MODEL,
+  DEFAULT_REASONING_EFFORT,
+  OAUTH_CLIENT_ID
+} from '../constants.js'
 import { MemoryStore } from '../memory/store.js'
 
 const REQUIRED_INPUT_MESSAGE = 'This field is required.'
 const VALID_APPROVAL_MODES = new Set(['ask', 'auto'])
+const VALID_REASONING_EFFORTS = new Set(['none', 'low', 'medium', 'high', 'xhigh'])
 const VALID_SANDBOX_MODES = new Set(['read-only', 'workspace-write', 'danger-full-access'])
 const VALID_MCP_APPROVAL_MODES = new Set(['always', 'never'])
 
@@ -350,9 +357,32 @@ function buildConfigActions(store: ConfigStore): CommandHubAction[] {
     {
       id: 'set-model',
       label: 'Set model',
-      description: 'change the default model',
-      prompts: [{ label: 'Model', name: 'model', required: true }],
-      run: async ({ model }) => formatJson(await store.patchConfig({ model: model || DEFAULT_MODEL }))
+      description: 'change model and reasoning effort',
+      prompts: [
+        { label: 'Model', name: 'model', required: true },
+        { label: 'Reasoning effort (none/low/medium/high/xhigh)', name: 'reasoningEffort' }
+      ],
+      run: async ({ model, reasoningEffort }) => {
+        const current = await store.loadConfig()
+        return formatJson(
+          await store.patchConfig({
+            model: model || DEFAULT_MODEL,
+            reasoningEffort: parseReasoningEffort(reasoningEffort, current.reasoningEffort)
+          })
+        )
+      }
+    },
+    {
+      id: 'set-reasoning-effort',
+      label: 'Set reasoning effort',
+      description: 'change none, low, medium, high, or xhigh',
+      prompts: [{ label: 'Reasoning effort', name: 'reasoningEffort', required: true }],
+      run: async ({ reasoningEffort }) =>
+        formatJson(
+          await store.patchConfig({
+            reasoningEffort: parseReasoningEffort(reasoningEffort, DEFAULT_REASONING_EFFORT)
+          })
+        )
     },
     {
       id: 'set-base-url',
@@ -600,6 +630,16 @@ function parseMcpApproval(value: string | undefined): 'always' | 'never' | undef
     throw new Error('MCP approval must be always or never.')
   }
   return value as 'always' | 'never'
+}
+
+function parseReasoningEffort(value: string | undefined, fallback: ReasoningEffort): ReasoningEffort {
+  if (!value) {
+    return fallback
+  }
+  if (!VALID_REASONING_EFFORTS.has(value)) {
+    throw new Error('Reasoning effort must be none, low, medium, high, or xhigh.')
+  }
+  return value as ReasoningEffort
 }
 
 function maskInput(value: string): string {

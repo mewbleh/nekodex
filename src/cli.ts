@@ -7,7 +7,7 @@ import { stdin as input, stdout as output } from 'node:process'
 import { Command } from 'commander'
 import { AuthManager, maskSecret } from './auth/manager.js'
 import { ConfigStore } from './config/store.js'
-import type { ApprovalMode, NekodexConfig, SandboxMode } from './config/schema.js'
+import type { ApprovalMode, NekodexConfig, ReasoningEffort, SandboxMode } from './config/schema.js'
 import { APP_VERSION, DEFAULT_AUTH_ISSUER, OAUTH_CLIENT_ID } from './constants.js'
 import { AgentRunner } from './agent/runner.js'
 import { NekodexError } from './errors.js'
@@ -34,6 +34,8 @@ program
   .version(APP_VERSION)
   .option('-C, --cwd <path>', 'workspace directory', process.cwd())
   .option('-m, --model <model>', 'model to use')
+  .option('--effort <effort>', 'reasoning effort: none, low, medium, high, xhigh')
+  .option('--reasoning-effort <effort>', 'reasoning effort: none, low, medium, high, xhigh')
   .option('-y, --yes', 'approve tool calls automatically')
   .option('--sandbox <mode>', 'sandbox mode: read-only, workspace-write, danger-full-access')
   .option('--danger-full-access', 'disable workspace sandbox restrictions')
@@ -48,6 +50,8 @@ program
   .description('Start an interactive or one-shot agent chat.')
   .option('-C, --cwd <path>', 'workspace directory', process.cwd())
   .option('-m, --model <model>', 'model to use')
+  .option('--effort <effort>', 'reasoning effort: none, low, medium, high, xhigh')
+  .option('--reasoning-effort <effort>', 'reasoning effort: none, low, medium, high, xhigh')
   .option('-y, --yes', 'approve tool calls automatically')
   .option('--sandbox <mode>', 'sandbox mode: read-only, workspace-write, danger-full-access')
   .option('--danger-full-access', 'disable workspace sandbox restrictions')
@@ -62,6 +66,8 @@ program
   .description('Start the Nekodex terminal UI.')
   .option('-C, --cwd <path>', 'workspace directory', process.cwd())
   .option('-m, --model <model>', 'model to use')
+  .option('--effort <effort>', 'reasoning effort: none, low, medium, high, xhigh')
+  .option('--reasoning-effort <effort>', 'reasoning effort: none, low, medium, high, xhigh')
   .option('-y, --yes', 'approve tool calls automatically')
   .option('--sandbox <mode>', 'sandbox mode: read-only, workspace-write, danger-full-access')
   .option('--danger-full-access', 'disable workspace sandbox restrictions')
@@ -394,6 +400,8 @@ mcp
 interface RootOptions {
   cwd: string
   model?: string
+  effort?: string
+  reasoningEffort?: string
   yes?: boolean
   sandbox?: string
   dangerFullAccess?: boolean
@@ -441,21 +449,54 @@ async function runChat(prompt: string, options: RootOptions): Promise<void> {
   await runInteractiveChat(runner)
 }
 
-function resolveRuntimeConfig(config: NekodexConfig, options: { sandbox?: string; dangerFullAccess?: boolean }): NekodexConfig {
+function resolveRuntimeConfig(
+  config: NekodexConfig,
+  options: {
+    dangerFullAccess?: boolean
+    effort?: string
+    reasoningEffort?: string
+    sandbox?: string
+  }
+): NekodexConfig {
+  const reasoningEffort = resolveReasoningEffortOption(options)
+  const nextConfig = reasoningEffort ? { ...config, reasoningEffort } : config
+
   if (options.dangerFullAccess) {
-    return { ...config, sandboxMode: 'danger-full-access' }
+    return { ...nextConfig, sandboxMode: 'danger-full-access' }
   }
   if (!options.sandbox) {
-    return config
+    return nextConfig
   }
   if (!isSandboxMode(options.sandbox)) {
     throw new Error(`Unsupported sandbox mode: ${options.sandbox}`)
   }
-  return { ...config, sandboxMode: options.sandbox }
+  return { ...nextConfig, sandboxMode: options.sandbox }
 }
 
 function isSandboxMode(value: string): value is SandboxMode {
   return value === 'read-only' || value === 'workspace-write' || value === 'danger-full-access'
+}
+
+function resolveReasoningEffortOption(options: {
+  effort?: string
+  reasoningEffort?: string
+}): ReasoningEffort | undefined {
+  const value = options.reasoningEffort ?? options.effort
+  if (!value) {
+    return undefined
+  }
+  if (!isReasoningEffort(value)) {
+    throw new Error(`Unsupported reasoning effort: ${value}`)
+  }
+  return value
+}
+
+function isReasoningEffort(value: string): value is ReasoningEffort {
+  return value === 'none' ||
+    value === 'low' ||
+    value === 'medium' ||
+    value === 'high' ||
+    value === 'xhigh'
 }
 
 async function runInteractiveChat(runner: AgentRunner): Promise<void> {

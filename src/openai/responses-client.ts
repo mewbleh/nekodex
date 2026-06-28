@@ -2,6 +2,7 @@ import { Readable } from 'node:stream'
 import axios, { type AxiosInstance } from 'axios'
 import { APP_VERSION, DEFAULT_OPENAI_BASE_URL } from '../constants.js'
 import { NekodexError } from '../errors.js'
+import type { ReasoningEffort } from '../config/schema.js'
 
 export interface FunctionToolSchema {
   type: 'function'
@@ -18,6 +19,9 @@ export interface CreateResponseRequest {
   instructions: string
   input: unknown
   tools: ResponseToolSchema[]
+  reasoning?: {
+    effort: ReasoningEffort
+  }
   store?: boolean
   stream?: boolean
   previous_response_id?: string

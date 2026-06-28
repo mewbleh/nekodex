@@ -38,6 +38,7 @@ describe('TUI status', () => {
           compactThresholdTokens: 1_000
         },
         model: 'gpt-5',
+        reasoningEffort: 'high',
         sandboxMode: 'read-only'
       }),
       sessionStore: fakeSessionStore(conversationItems),
@@ -46,6 +47,7 @@ describe('TUI status', () => {
 
     expect(status).toContain('ChatGPT account acct-123 (ChatGPT backend)')
     expect(status).toContain(`model: ${DEFAULT_CHATGPT_CODEX_MODEL} (remapped from gpt-5)`)
+    expect(status).toContain('reasoning: high')
     expect(status).toContain(`approx ${estimateContextTokens(conversationItems)} / 1,000 tokens`)
     expect(status).toContain('1 session items')
     expect(status).toContain('approval: auto')

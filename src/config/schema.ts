@@ -2,11 +2,15 @@ import { z } from 'zod'
 import {
   DEFAULT_COMPACT_THRESHOLD_TOKENS,
   DEFAULT_MODEL,
-  DEFAULT_OPENAI_BASE_URL
+  DEFAULT_OPENAI_BASE_URL,
+  DEFAULT_REASONING_EFFORT
 } from '../constants.js'
 
 export const approvalModeSchema = z.enum(['ask', 'auto'])
 export type ApprovalMode = z.infer<typeof approvalModeSchema>
+
+export const reasoningEffortSchema = z.enum(['none', 'low', 'medium', 'high', 'xhigh'])
+export type ReasoningEffort = z.infer<typeof reasoningEffortSchema>
 
 export const sandboxModeSchema = z.enum(['read-only', 'workspace-write', 'danger-full-access'])
 export type SandboxMode = z.infer<typeof sandboxModeSchema>
@@ -44,6 +48,7 @@ export type ContextWindowConfig = z.infer<typeof contextWindowSchema>
 
 export const configSchema = z.object({
   model: z.string().min(1).default(DEFAULT_MODEL),
+  reasoningEffort: reasoningEffortSchema.default(DEFAULT_REASONING_EFFORT),
   openaiBaseUrl: z.string().url().default(DEFAULT_OPENAI_BASE_URL),
   approvalMode: approvalModeSchema.default('ask'),
   sandboxMode: sandboxModeSchema.default('workspace-write'),

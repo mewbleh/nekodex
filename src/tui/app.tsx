@@ -228,6 +228,7 @@ function NekodexTui({ options }: { options: TuiOptions }) {
   const frame = ANIMATION_FRAMES[frameIndex % ANIMATION_FRAMES.length]
   const approvalMode = options.approvalMode ?? options.config.approvalMode
   const contextMode = options.config.contextWindow.autoCompact ? 'auto' : 'manual'
+  const reasoningEffort = options.config.reasoningEffort
   const sandboxMode = options.config.sandboxMode
 
   return (
@@ -238,6 +239,7 @@ function NekodexTui({ options }: { options: TuiOptions }) {
         frame={frame}
         isRunning={isRunning}
         model={model}
+        reasoningEffort={reasoningEffort}
         sandboxMode={sandboxMode}
         status={status}
         workspaceLabel={workspaceLabel}
@@ -259,6 +261,7 @@ function Header({
   frame,
   isRunning,
   model,
+  reasoningEffort,
   sandboxMode,
   status,
   workspaceLabel
@@ -268,6 +271,7 @@ function Header({
   frame: string
   isRunning: boolean
   model: string
+  reasoningEffort: string
   sandboxMode: string
   status: string
   workspaceLabel: string
@@ -289,6 +293,8 @@ function Header({
         <Text> {model}</Text>
         <Text color="gray"> | approval</Text>
         <Text> {approvalMode}</Text>
+        <Text color="gray"> | effort</Text>
+        <Text> {reasoningEffort}</Text>
         <Text color="gray"> | sandbox</Text>
         <Text> {sandboxMode}</Text>
         <Text color="gray"> | context</Text>

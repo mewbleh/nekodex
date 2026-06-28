@@ -6,6 +6,7 @@ Nekodex is a lightweight TypeScript agent CLI inspired by Codex. It supports:
 - ChatGPT browser login with PKCE
 - ChatGPT device-code login
 - `gpt-5.5` default model, with ChatGPT-backend remapping for retired Codex model names
+- Configurable reasoning effort for Responses models
 - React/Ink terminal UI with `nekodex tui`
 - Persistent memories with `nekodex memory`
 - `AGENTS.md`, `AGENT.md`, and `SKILL.md` instruction loading
@@ -62,6 +63,7 @@ Useful options:
 
 ```bash
 nekodex -C ./some-project -m gpt-5.5 -- "add tests for the parser"
+nekodex -m gpt-5.5 --effort high -- "refactor the parser"
 nekodex -y -- "run the test suite and fix failures"
 nekodex --sandbox read-only -- "review this repo without changing files"
 nekodex --danger-full-access -- "inspect a project that needs outside-workspace access"
@@ -73,6 +75,7 @@ nekodex mcp add docs https://example.com/mcp --auth-env DOCS_MCP_TOKEN
 nekodex mcp serve -C .
 nekodex config set contextWindow.autoCompact true
 nekodex config set contextWindow.compactThresholdTokens 200000
+nekodex config set reasoningEffort medium
 nekodex config set approvalMode auto
 nekodex config set sandboxMode workspace-write
 nekodex config show

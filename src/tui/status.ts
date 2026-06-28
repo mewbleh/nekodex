@@ -45,6 +45,7 @@ export async function buildTuiStatus(options: BuildTuiStatusOptions): Promise<st
   return [
     `auth: ${formatAuthForStatus(storedAuth, resolvedAuth, authError)}`,
     `model: ${formatModelForStatus(selectedModel)}`,
+    `reasoning: ${options.config.reasoningEffort}`,
     `context: ${contextMode}, approx ${formatNumber(approxTokens)} / ${formatNumber(compactThresholdTokens)} tokens, ${formatNumber(conversationItems.length)} session items`,
     `approval: ${options.approvalMode ?? options.config.approvalMode}`,
     `sandbox: ${options.config.sandboxMode}`
