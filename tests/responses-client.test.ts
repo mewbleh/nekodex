@@ -62,9 +62,54 @@ describe('ResponsesClient', () => {
     expect(received.headers['chatgpt-account-id']).toBe('account-123')
     expect(received.body).toMatchObject({ model: 'gpt-5' })
   })
+
+  it('parses streamed Responses events for ChatGPT backend requests', async () => {
+    const received = await withCaptureServer(
+      async (baseUrl) => {
+        const client = new ResponsesClient('https://api.openai.com/v1')
+        const response = await client.createResponse(
+          {
+            token: 'chatgpt-access-token',
+            baseUrl,
+            headers: { 'ChatGPT-Account-ID': 'account-123' }
+          },
+          {
+            model: 'gpt-5.5',
+            instructions: 'test',
+            input: 'hello',
+            tools: [],
+            store: false,
+            stream: true
+          }
+        )
+
+        expect(response).toMatchObject({
+          id: 'resp-stream',
+          output_text: 'hello world'
+        })
+        expect(response.output).toContainEqual({
+          type: 'function_call',
+          call_id: 'call-1',
+          name: 'shell_command',
+          arguments: '{}'
+        })
+      },
+      writeStreamingResponse
+    )
+
+    expect(received.headers.accept).toBe('text/event-stream')
+    expect(received.body).toMatchObject({
+      model: 'gpt-5.5',
+      store: false,
+      stream: true
+    })
+  })
 })
 
-async function withCaptureServer(callback: (baseUrl: string) => Promise<void>): Promise<{
+async function withCaptureServer(
+  callback: (baseUrl: string) => Promise<void>,
+  respond: (response: http.ServerResponse) => void = writeJsonResponse
+): Promise<{
   path: string
   headers: http.IncomingHttpHeaders
   body: Record<string, unknown>
@@ -78,8 +123,7 @@ async function withCaptureServer(callback: (baseUrl: string) => Promise<void>): 
       const chunks: Buffer[] = []
       request.on('data', (chunk: Buffer) => chunks.push(chunk))
       request.on('end', () => {
-        response.writeHead(200, { 'Content-Type': 'application/json' })
-        response.end(JSON.stringify({ id: 'response-123', output_text: 'ok' }))
+        respond(response)
         resolve({
           path: request.url ?? '',
           headers: request.headers,
@@ -92,6 +136,35 @@ async function withCaptureServer(callback: (baseUrl: string) => Promise<void>): 
   const baseUrl = await listenServer()
   await callback(baseUrl)
   return requestPromise
+}
+
+function writeJsonResponse(response: http.ServerResponse): void {
+  response.writeHead(200, { 'Content-Type': 'application/json' })
+  response.end(JSON.stringify({ id: 'response-123', output_text: 'ok' }))
+}
+
+function writeStreamingResponse(response: http.ServerResponse): void {
+  response.writeHead(200, { 'Content-Type': 'text/event-stream' })
+  response.write(
+    'event: response.created\n' +
+      'data: {"type":"response.created","response":{"id":"resp-stream"}}\n\n'
+  )
+  response.write(
+    'event: response.output_text.delta\n' +
+      'data: {"type":"response.output_text.delta","delta":"hello "}\n\n'
+  )
+  response.write(
+    'event: response.output_text.delta\n' +
+      'data: {"type":"response.output_text.delta","delta":"world"}\n\n'
+  )
+  response.write(
+    'event: response.output_item.done\n' +
+      'data: {"type":"response.output_item.done","item":{"type":"function_call","call_id":"call-1","name":"shell_command","arguments":"{}"}}\n\n'
+  )
+  response.end(
+    'event: response.completed\n' +
+      'data: {"type":"response.completed","response":{"id":"resp-stream"}}\n\n'
+  )
 }
 
 function listenServer(): Promise<string> {

@@ -199,14 +199,14 @@ function Header({
         <Text color="gray"> {status}</Text>
       </Box>
       <Box>
-        <Text color="gray">cwd </Text>
-        <Text>{workspaceLabel}</Text>
-        <Text color="gray"> | model </Text>
-        <Text>{model}</Text>
-        <Text color="gray"> | approval </Text>
-        <Text>{approvalMode}</Text>
-        <Text color="gray"> | context </Text>
-        <Text>{contextMode}</Text>
+        <Text color="gray">cwd</Text>
+        <Text> {workspaceLabel}</Text>
+        <Text color="gray"> | model</Text>
+        <Text> {model}</Text>
+        <Text color="gray"> | approval</Text>
+        <Text> {approvalMode}</Text>
+        <Text color="gray"> | context</Text>
+        <Text> {contextMode}</Text>
       </Box>
     </Box>
   )
@@ -246,10 +246,7 @@ function Composer({ isRunning, prompt }: { isRunning: boolean; prompt: string })
 function Footer() {
   return (
     <Box marginTop={1}>
-      <Text color="gray">Enter send</Text>
-      <Text color="gray">  Esc clear</Text>
-      <Text color="gray">  Ctrl+C quit</Text>
-      <Text color="gray">  nekodex auth/config/tools/mcp open menus</Text>
+      <Text color="gray">Enter send | Esc clear | Ctrl+C quit | nekodex auth/config/tools/mcp menus</Text>
     </Box>
   )
 }

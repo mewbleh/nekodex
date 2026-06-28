@@ -58,6 +58,7 @@ export class AgentRunner {
           `model: ${selectedModel.model} (ChatGPT backend remapped from ${selectedModel.remappedFrom})`
         )
       }
+      const shouldUseChatGptBackendOptions = shouldDisableResponseStore(auth)
 
       const response = await this.client.createResponse(
         {
@@ -70,7 +71,8 @@ export class AgentRunner {
           instructions,
           input,
           tools: [...this.toolRegistry.schemas(), ...buildConfiguredOpenAiTools(this.options.config)],
-          store: shouldDisableResponseStore(auth) ? false : undefined,
+          store: shouldUseChatGptBackendOptions ? false : undefined,
+          stream: shouldUseChatGptBackendOptions ? true : undefined,
           previous_response_id: this.previousResponseId,
           context_management: buildContextManagement(this.options.config)
         }
