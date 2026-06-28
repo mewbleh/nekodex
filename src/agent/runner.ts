@@ -14,6 +14,7 @@ import { ToolRegistry } from '../tools/registry.js'
 import { buildContextManagement } from './context-management.js'
 import { saveResponseImages } from './generated-images.js'
 import { buildInstructions } from './instructions.js'
+import { selectResponseModel } from './model-selection.js'
 
 export interface AgentRunnerOptions {
   authManager: AuthManager
@@ -47,6 +48,17 @@ export class AgentRunner {
     ]
 
     for (let step = 0; step < DEFAULT_MAX_AGENT_STEPS; step += 1) {
+      const selectedModel = selectResponseModel(
+        auth,
+        this.options.model,
+        this.options.config.model
+      )
+      if (step === 0 && selectedModel.remappedFrom) {
+        this.writeStatus(
+          `model: ${selectedModel.model} (ChatGPT backend remapped from ${selectedModel.remappedFrom})`
+        )
+      }
+
       const response = await this.client.createResponse(
         {
           token: auth.token,
@@ -54,7 +66,7 @@ export class AgentRunner {
           headers: auth.headers
         },
         {
-          model: this.options.model ?? this.options.config.model,
+          model: selectedModel.model,
           instructions,
           input,
           tools: [...this.toolRegistry.schemas(), ...buildConfiguredOpenAiTools(this.options.config)],
