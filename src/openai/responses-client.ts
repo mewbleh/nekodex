@@ -202,6 +202,9 @@ function applyResponseStreamBlock(
   if (type === 'response.completed') {
     const response = getRecordField(event, 'response')
     const completedOutput = response?.output
+    if (typeof response?.output_text === 'string' && textParts.length === 0) {
+      textParts.push(response.output_text)
+    }
     if (output.length === 0 && Array.isArray(completedOutput)) {
       output.push(...completedOutput.filter(isRecord))
     }
