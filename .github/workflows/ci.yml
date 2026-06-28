@@ -78,9 +78,27 @@ jobs:
       - name: Use npm package name
         if: env.NODE_AUTH_TOKEN != ''
         run: npm pkg set name=@mewbleh/nekodex
-      - name: Publish to npm
+      - name: Check npm version
+        id: npm-version
         if: env.NODE_AUTH_TOKEN != ''
+        shell: bash
+        run: |
+          PACKAGE_NAME=$(node -p "require('./package.json').name")
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          echo "package_name=$PACKAGE_NAME" >> "$GITHUB_OUTPUT"
+          echo "package_version=$PACKAGE_VERSION" >> "$GITHUB_OUTPUT"
+          if npm view "$PACKAGE_NAME@$PACKAGE_VERSION" version >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "$PACKAGE_NAME@$PACKAGE_VERSION already exists on npm; skipping publish."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Publish to npm
+        if: env.NODE_AUTH_TOKEN != '' && steps.npm-version.outputs.exists != 'true'
         run: npm publish --access public
+      - name: Skip existing npm version
+        if: env.NODE_AUTH_TOKEN != '' && steps.npm-version.outputs.exists == 'true'
+        run: echo "${{ steps.npm-version.outputs.package_name }}@${{ steps.npm-version.outputs.package_version }} is already published."
       - name: Skip publish
         if: env.NODE_AUTH_TOKEN == ''
         run: echo "NPM_TOKEN is not configured; skipping npm publish."

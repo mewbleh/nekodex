@@ -21,7 +21,7 @@ const program = new Command()
 program
   .name('nekodex')
   .description('Lightweight TypeScript agent CLI.')
-  .version('1.0.0')
+  .version('1.0.1')
   .option('-C, --cwd <path>', 'workspace directory', process.cwd())
   .option('-m, --model <model>', 'model to use')
   .option('-y, --yes', 'approve tool calls automatically')

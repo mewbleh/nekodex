@@ -61,7 +61,7 @@ async function handleRequest(
       protocolVersion: '2024-11-05',
       serverInfo: {
         name: 'nekodex',
-        version: '1.0.0'
+        version: '1.0.1'
       },
       capabilities: {
         tools: {}
