@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { selectResponseModel, shouldDisableResponseStore } from '../src/agent/model-selection.js'
+import {
+  selectResponseModel,
+  shouldDisableResponseStore,
+  shouldUsePreviousResponseId
+} from '../src/agent/model-selection.js'
 import { DEFAULT_CHATGPT_CODEX_BASE_URL, DEFAULT_CHATGPT_CODEX_MODEL } from '../src/constants.js'
 
 describe('selectResponseModel', () => {
@@ -33,5 +37,10 @@ describe('selectResponseModel', () => {
   it('disables response storage for ChatGPT backend auth', () => {
     expect(shouldDisableResponseStore({ baseUrl: DEFAULT_CHATGPT_CODEX_BASE_URL })).toBe(true)
     expect(shouldDisableResponseStore({})).toBe(false)
+  })
+
+  it('does not use previous response ids for storeless ChatGPT backend auth', () => {
+    expect(shouldUsePreviousResponseId({ baseUrl: DEFAULT_CHATGPT_CODEX_BASE_URL })).toBe(false)
+    expect(shouldUsePreviousResponseId({})).toBe(true)
   })
 })

@@ -84,9 +84,9 @@ export class ResponsesClient {
     } catch (error) {
       if (axios.isAxiosError(error)) {
         const status = error.response?.status
-        const detail = error.response?.data
+        const detail = await formatResponseDetail(error.response?.data)
         throw new NekodexError(
-          `OpenAI request failed${status ? ` with status ${status}` : ''}: ${formatDetail(detail)}`
+          `OpenAI request failed${status ? ` with status ${status}` : ''}: ${detail}`
         )
       }
       throw error
@@ -247,6 +247,21 @@ function getStringField(value: Record<string, unknown>, key: string): string | u
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+async function formatResponseDetail(detail: unknown): Promise<string> {
+  if (detail instanceof Readable) {
+    return formatDetail(await readStreamText(detail))
+  }
+  return formatDetail(detail)
+}
+
+async function readStreamText(stream: Readable): Promise<string> {
+  const chunks: string[] = []
+  for await (const chunk of stream) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk))
+  }
+  return chunks.join('')
 }
 
 function formatDetail(detail: unknown): string {

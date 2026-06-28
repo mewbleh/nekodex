@@ -37,6 +37,10 @@ export function shouldDisableResponseStore(auth: Pick<ResolvedAuth, 'baseUrl'>):
   return Boolean(auth.baseUrl)
 }
 
+export function shouldUsePreviousResponseId(auth: Pick<ResolvedAuth, 'baseUrl'>): boolean {
+  return !shouldDisableResponseStore(auth)
+}
+
 function shouldUseChatGptCodexDefault(model: string): boolean {
   return model === DEFAULT_MODEL || RETIRED_CHATGPT_CODEX_MODELS.has(model)
 }

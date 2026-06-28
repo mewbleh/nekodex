@@ -104,6 +104,33 @@ describe('ResponsesClient', () => {
       stream: true
     })
   })
+
+  it('formats streamed HTTP error bodies instead of printing object placeholders', async () => {
+    await withCaptureServer(
+      async (baseUrl) => {
+        const client = new ResponsesClient('https://api.openai.com/v1')
+        await expect(
+          client.createResponse(
+            {
+              token: 'chatgpt-access-token',
+              baseUrl
+            },
+            {
+              model: 'gpt-5.5',
+              instructions: 'test',
+              input: 'hello',
+              tools: [],
+              store: false,
+              stream: true
+            }
+          )
+        ).rejects.toThrow(
+          'OpenAI request failed with status 400: {"detail":"previous_response_id is not available when store is false"}'
+        )
+      },
+      writeStreamingErrorResponse
+    )
+  })
 })
 
 async function withCaptureServer(
@@ -164,6 +191,15 @@ function writeStreamingResponse(response: http.ServerResponse): void {
   response.end(
     'event: response.completed\n' +
       'data: {"type":"response.completed","response":{"id":"resp-stream"}}\n\n'
+  )
+}
+
+function writeStreamingErrorResponse(response: http.ServerResponse): void {
+  response.writeHead(400, { 'Content-Type': 'application/json' })
+  response.end(
+    JSON.stringify({
+      detail: 'previous_response_id is not available when store is false'
+    })
   )
 }
 

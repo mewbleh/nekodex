@@ -14,7 +14,11 @@ import { ToolRegistry } from '../tools/registry.js'
 import { buildContextManagement } from './context-management.js'
 import { saveResponseImages } from './generated-images.js'
 import { buildInstructions } from './instructions.js'
-import { selectResponseModel, shouldDisableResponseStore } from './model-selection.js'
+import {
+  selectResponseModel,
+  shouldDisableResponseStore,
+  shouldUsePreviousResponseId
+} from './model-selection.js'
 
 export interface AgentRunnerOptions {
   authManager: AuthManager
@@ -28,6 +32,7 @@ export interface AgentRunnerOptions {
 }
 
 export class AgentRunner {
+  private conversationItems: unknown[] = []
   private previousResponseId: string | undefined
   private readonly client: ResponsesClient
   private readonly toolRegistry = ToolRegistry.withDefaultTools()
@@ -38,9 +43,15 @@ export class AgentRunner {
 
   async run(prompt: string): Promise<void> {
     const auth = await this.options.authManager.resolveAuth()
+    const shouldUseStorelessHistory = shouldDisableResponseStore(auth)
     const memoryInstructionBlock = (await this.options.memoryStore?.toInstructionBlock()) ?? ''
     const instructions = await buildInstructions(this.options.workspaceRoot, memoryInstructionBlock)
-    let input: unknown = [
+    const userInputItem = {
+      role: 'user',
+      content: [{ type: 'input_text', text: prompt }]
+    }
+    const turnItems: unknown[] = [userInputItem]
+    let input: unknown = shouldUseStorelessHistory ? [...this.conversationItems, ...turnItems] : [
       {
         role: 'user',
         content: [{ type: 'input_text', text: prompt }]
@@ -73,7 +84,7 @@ export class AgentRunner {
           tools: [...this.toolRegistry.schemas(), ...buildConfiguredOpenAiTools(this.options.config)],
           store: shouldUseChatGptBackendOptions ? false : undefined,
           stream: shouldUseChatGptBackendOptions ? true : undefined,
-          previous_response_id: this.previousResponseId,
+          previous_response_id: shouldUsePreviousResponseId(auth) ? this.previousResponseId : undefined,
           context_management: buildContextManagement(this.options.config)
         }
       )
@@ -87,6 +98,13 @@ export class AgentRunner {
 
       const functionCalls = getFunctionCalls(response)
       if (functionCalls.length === 0) {
+        if (shouldUseStorelessHistory) {
+          this.conversationItems = [
+            ...this.conversationItems,
+            ...turnItems,
+            ...getResponseHistoryItems(response)
+          ]
+        }
         return
       }
 
@@ -107,7 +125,12 @@ export class AgentRunner {
         })
       }
 
-      input = outputs
+      if (shouldUseStorelessHistory) {
+        turnItems.push(...getResponseHistoryItems(response), ...outputs)
+        input = [...this.conversationItems, ...turnItems]
+      } else {
+        input = outputs
+      }
     }
 
     this.writeStatus(`Stopped after ${DEFAULT_MAX_AGENT_STEPS} agent steps.`)
@@ -128,6 +151,22 @@ export class AgentRunner {
     }
     console.error(text)
   }
+}
+
+function getResponseHistoryItems(response: OpenAiResponse): unknown[] {
+  if (response.output?.length) {
+    return response.output
+  }
+  if (!response.output_text) {
+    return []
+  }
+  return [
+    {
+      type: 'message',
+      role: 'assistant',
+      content: [{ type: 'output_text', text: response.output_text }]
+    }
+  ]
 }
 
 function getFunctionCalls(response: OpenAiResponse): ResponseFunctionCall[] {
