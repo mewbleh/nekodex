@@ -416,6 +416,7 @@ function handleCallbackRequest(
     const state = url.searchParams.get('state')
     const code = url.searchParams.get('code')
     const error = url.searchParams.get('error')
+    const errorDescription = url.searchParams.get('error_description')
 
     if (state !== expectedState) {
       response.writeHead(400, { 'Content-Type': 'text/plain' })
@@ -427,7 +428,9 @@ function handleCallbackRequest(
     if (error) {
       response.writeHead(400, { 'Content-Type': 'text/plain' })
       response.end('Sign-in failed.')
-      rejectCode(new AuthError(`OAuth callback failed: ${error}`))
+      rejectCode(
+        new AuthError(`OAuth callback failed: ${formatOAuthCallbackError(error, errorDescription)}`)
+      )
       return
     }
 
@@ -456,6 +459,10 @@ function formatAxiosError(error: unknown): string {
     return error.message ?? 'request failed'
   }
   return error instanceof Error ? error.message : String(error)
+}
+
+function formatOAuthCallbackError(error: string, description: string | null): string {
+  return description ? `${error}: ${description}` : error
 }
 
 function formatResponseDetail(detail: unknown): string {
