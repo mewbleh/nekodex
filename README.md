@@ -18,6 +18,14 @@ Nekodex is a lightweight TypeScript agent CLI inspired by Codex. It supports:
 ## Quick Start
 
 ```bash
+pnpm add -g @mewbleh/nekodex
+nekodex auth login --api-key
+nekodex -- "inspect this project and suggest next steps"
+```
+
+For local development:
+
+```bash
 pnpm install
 pnpm build
 pnpm start auth login --api-key
