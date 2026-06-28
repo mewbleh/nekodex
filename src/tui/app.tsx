@@ -9,10 +9,10 @@ import { APP_VERSION } from '../constants.js'
 import { MemoryStore } from '../memory/store.js'
 
 const ANIMATION_INTERVAL_MS = 120
-const ANIMATION_FRAMES = ['dots', 'o..', '.o.', '..o']
+const ANIMATION_FRAMES = ['-', '\\', '|', '/']
 const MAX_TRANSCRIPT_ITEMS = 80
 const MIN_TRANSCRIPT_HEIGHT = 8
-const STATIC_LAYOUT_ROWS = 13
+const STATIC_LAYOUT_ROWS = 5
 
 type TranscriptRole = 'assistant' | 'error' | 'status' | 'user'
 
@@ -146,24 +146,24 @@ function NekodexTui({ options }: { options: TuiOptions }) {
   const model = options.model ?? options.config.model
   const workspaceLabel = compactPath(options.workspaceRoot, dimensions.columns)
   const frame = ANIMATION_FRAMES[frameIndex % ANIMATION_FRAMES.length]
+  const approvalMode = options.approvalMode ?? options.config.approvalMode
+  const contextMode = options.config.contextWindow.autoCompact ? 'auto' : 'manual'
 
   return (
     <Box flexDirection="column" paddingX={1}>
-      <Header model={model} status={status} frame={frame} isRunning={isRunning} />
-      <Box marginTop={1} gap={1}>
-        <InfoPill label="cwd" value={workspaceLabel} />
-        <InfoPill label="approval" value={options.approvalMode ?? options.config.approvalMode} />
-        <InfoPill
-          label="context"
-          value={options.config.contextWindow.autoCompact ? 'auto compact' : 'manual'}
-        />
-      </Box>
-      <Box marginTop={1} borderStyle="round" borderColor="gray" paddingX={1} height={transcriptHeight + 2}>
-        <Box flexDirection="column">
-          {visibleTranscript.map((item) => (
-            <TranscriptLine key={item.id} item={item} width={dimensions.columns - 8} />
-          ))}
-        </Box>
+      <Header
+        approvalMode={approvalMode}
+        contextMode={contextMode}
+        frame={frame}
+        isRunning={isRunning}
+        model={model}
+        status={status}
+        workspaceLabel={workspaceLabel}
+      />
+      <Box marginTop={1} flexDirection="column" height={transcriptHeight}>
+        {visibleTranscript.map((item) => (
+          <TranscriptLine key={item.id} item={item} width={dimensions.columns - 12} />
+        ))}
       </Box>
       <Composer prompt={prompt} isRunning={isRunning} />
       <Footer />
@@ -172,15 +172,21 @@ function NekodexTui({ options }: { options: TuiOptions }) {
 }
 
 function Header({
+  approvalMode,
+  contextMode,
   frame,
   isRunning,
   model,
-  status
+  status,
+  workspaceLabel
 }: {
+  approvalMode: string
+  contextMode: string
   frame: string
   isRunning: boolean
   model: string
   status: string
+  workspaceLabel: string
 }) {
   return (
     <Box flexDirection="column">
@@ -189,23 +195,19 @@ function Header({
           Nekodex
         </Text>
         <Text color="gray"> v{APP_VERSION} </Text>
-        <Text color="gray">lightweight agentic coding</Text>
-      </Box>
-      <Box>
         <Text color={isRunning ? 'yellow' : 'green'}>{isRunning ? frame : 'ok'}</Text>
         <Text color="gray"> {status}</Text>
-        <Text color="gray"> | model </Text>
-        <Text color="white">{model}</Text>
       </Box>
-    </Box>
-  )
-}
-
-function InfoPill({ label, value }: { label: string; value: string }) {
-  return (
-    <Box borderStyle="round" borderColor="gray" paddingX={1}>
-      <Text color="gray">{label} </Text>
-      <Text color="white">{value}</Text>
+      <Box>
+        <Text color="gray">cwd </Text>
+        <Text>{workspaceLabel}</Text>
+        <Text color="gray"> | model </Text>
+        <Text>{model}</Text>
+        <Text color="gray"> | approval </Text>
+        <Text>{approvalMode}</Text>
+        <Text color="gray"> | context </Text>
+        <Text>{contextMode}</Text>
+      </Box>
     </Box>
   )
 }
@@ -213,17 +215,15 @@ function InfoPill({ label, value }: { label: string; value: string }) {
 function TranscriptLine({ item, width }: { item: TranscriptItem; width: number }) {
   const role = roleStyle(item.role)
   const lines = wrapText(item.text, Math.max(24, width))
+  const prefix = role.label.padEnd(8, ' ')
 
   return (
-    <Box marginBottom={1} flexDirection="column">
-      <Box>
-        <Text color={role.color} bold>
-          {role.label}
-        </Text>
-        <Text color="gray"> {role.rule}</Text>
-      </Box>
+    <Box flexDirection="column">
       {lines.map((line, index) => (
-        <Box key={`${item.id}-${index}`} paddingLeft={2}>
+        <Box key={`${item.id}-${index}`}>
+          <Text color={role.color} bold>
+            {index === 0 ? prefix : ' '.repeat(prefix.length)}
+          </Text>
           <Text color={role.bodyColor}>{line || ' '}</Text>
         </Box>
       ))}
@@ -233,13 +233,12 @@ function TranscriptLine({ item, width }: { item: TranscriptItem; width: number }
 
 function Composer({ isRunning, prompt }: { isRunning: boolean; prompt: string }) {
   return (
-    <Box marginTop={1} borderStyle="round" borderColor={isRunning ? 'yellow' : 'cyan'} paddingX={1}>
+    <Box marginTop={1}>
       <Text color="cyan" bold>
-        ›{' '}
+        {'> '}
       </Text>
       <Text>{prompt}</Text>
-      <Text color="gray">{prompt ? '' : 'Ask Nekodex to edit, inspect, run, or explain...'}</Text>
-      <Text color={isRunning ? 'yellow' : 'gray'}>{isRunning ? '  working...' : '  '}</Text>
+      <Text color="gray">{prompt ? '' : isRunning ? 'working...' : 'type a request'}</Text>
     </Box>
   )
 }
@@ -250,7 +249,7 @@ function Footer() {
       <Text color="gray">Enter send</Text>
       <Text color="gray">  Esc clear</Text>
       <Text color="gray">  Ctrl+C quit</Text>
-      <Text color="gray">  use --plain for readline mode</Text>
+      <Text color="gray">  nekodex auth/config/tools/mcp open menus</Text>
     </Box>
   )
 }
@@ -259,18 +258,17 @@ function roleStyle(role: TranscriptRole): {
   bodyColor: 'gray' | 'red' | 'white'
   color: 'cyan' | 'green' | 'red' | 'yellow'
   label: string
-  rule: string
 } {
   if (role === 'user') {
-    return { bodyColor: 'white', color: 'green', label: 'you', rule: 'request' }
+    return { bodyColor: 'white', color: 'green', label: 'you' }
   }
   if (role === 'assistant') {
-    return { bodyColor: 'white', color: 'cyan', label: 'nekodex', rule: 'response' }
+    return { bodyColor: 'white', color: 'cyan', label: 'nekodex' }
   }
   if (role === 'error') {
-    return { bodyColor: 'red', color: 'red', label: 'error', rule: 'needs attention' }
+    return { bodyColor: 'red', color: 'red', label: 'error' }
   }
-  return { bodyColor: 'gray', color: 'yellow', label: 'system', rule: 'activity' }
+  return { bodyColor: 'gray', color: 'yellow', label: 'system' }
 }
 
 function getTerminalDimensions(stdout: NodeJS.WriteStream): { columns: number; rows: number } {

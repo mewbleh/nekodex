@@ -14,7 +14,7 @@ import { ToolRegistry } from '../tools/registry.js'
 import { buildContextManagement } from './context-management.js'
 import { saveResponseImages } from './generated-images.js'
 import { buildInstructions } from './instructions.js'
-import { selectResponseModel } from './model-selection.js'
+import { selectResponseModel, shouldDisableResponseStore } from './model-selection.js'
 
 export interface AgentRunnerOptions {
   authManager: AuthManager
@@ -70,6 +70,7 @@ export class AgentRunner {
           instructions,
           input,
           tools: [...this.toolRegistry.schemas(), ...buildConfiguredOpenAiTools(this.options.config)],
+          store: shouldDisableResponseStore(auth) ? false : undefined,
           previous_response_id: this.previousResponseId,
           context_management: buildContextManagement(this.options.config)
         }

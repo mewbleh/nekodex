@@ -33,6 +33,10 @@ export function selectResponseModel(
   }
 }
 
+export function shouldDisableResponseStore(auth: Pick<ResolvedAuth, 'baseUrl'>): boolean {
+  return Boolean(auth.baseUrl)
+}
+
 function shouldUseChatGptCodexDefault(model: string): boolean {
   return model === DEFAULT_MODEL || RETIRED_CHATGPT_CODEX_MODELS.has(model)
 }

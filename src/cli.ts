@@ -8,13 +8,22 @@ import { Command } from 'commander'
 import { AuthManager, maskSecret } from './auth/manager.js'
 import { ConfigStore } from './config/store.js'
 import type { ApprovalMode } from './config/schema.js'
-import { APP_VERSION, DEFAULT_AUTH_ISSUER, DEFAULT_MODEL, OAUTH_CLIENT_ID } from './constants.js'
+import { APP_VERSION, DEFAULT_AUTH_ISSUER, OAUTH_CLIENT_ID } from './constants.js'
 import { AgentRunner } from './agent/runner.js'
 import { NekodexError } from './errors.js'
 import { MemoryStore } from './memory/store.js'
 import { startTui } from './tui/app.js'
+import { startCommandHub } from './tui/command-hub.js'
 import { serveMcp } from './mcp/server.js'
 import { getPlatformInfo } from './platform.js'
+import {
+  collectOption,
+  formatAuthStatus,
+  formatChatGptLoginMessage,
+  nonEmptyArrayField,
+  parseConfigPatch,
+  parsePartialImagesOption
+} from './command-helpers.js'
 
 const program = new Command()
 
@@ -108,7 +117,12 @@ program
     }
   })
 
-const auth = program.command('auth').description('Manage Nekodex auth.')
+const auth = program
+  .command('auth')
+  .description('Manage Nekodex auth.')
+  .action(async () => {
+    await startCommandHub({ group: 'auth' })
+  })
 
 auth
   .command('login')
@@ -150,19 +164,7 @@ auth
   .action(async () => {
     const manager = new AuthManager(new ConfigStore())
     const storedAuth = await manager.status()
-    if (!storedAuth) {
-      console.log('Not logged in.')
-      return
-    }
-
-    if (storedAuth.mode === 'api-key') {
-      console.log(`Logged in with API key ${maskSecret(storedAuth.apiKey)}.`)
-      return
-    }
-
-    console.log(
-      `Logged in with ChatGPT${storedAuth.accountId ? ` (${storedAuth.accountId})` : ''}.`
-    )
+    console.log(formatAuthStatus(storedAuth))
   })
 
 auth
@@ -174,7 +176,12 @@ auth
     console.log('Logged out.')
   })
 
-const config = program.command('config').description('Manage local config.')
+const config = program
+  .command('config')
+  .description('Manage local config.')
+  .action(async () => {
+    await startCommandHub({ group: 'config' })
+  })
 
 config
   .command('show')
@@ -196,7 +203,12 @@ config
     console.log(JSON.stringify(nextConfig, null, 2))
   })
 
-const memory = program.command('memory').description('Manage persistent memories.')
+const memory = program
+  .command('memory')
+  .description('Manage persistent memories.')
+  .action(async () => {
+    await startCommandHub({ group: 'memory' })
+  })
 
 memory
   .command('add')
@@ -252,7 +264,12 @@ memory
     console.log('Cleared memories.')
   })
 
-const tools = program.command('tools').description('Manage OpenAI-hosted tool config.')
+const tools = program
+  .command('tools')
+  .description('Manage OpenAI-hosted tool config.')
+  .action(async () => {
+    await startCommandHub({ group: 'tools' })
+  })
 
 tools
   .command('list')
@@ -294,7 +311,12 @@ tools
     console.log('Cleared OpenAI-hosted tools.')
   })
 
-const mcp = program.command('mcp').description('Manage MCP configuration and server mode.')
+const mcp = program
+  .command('mcp')
+  .description('Manage MCP configuration and server mode.')
+  .action(async () => {
+    await startCommandHub({ group: 'mcp' })
+  })
 
 mcp
   .command('list')
@@ -432,56 +454,6 @@ async function askSecret(label: string): Promise<string> {
   } finally {
     readline.close()
   }
-}
-
-function parseConfigPatch(key: string, value: string) {
-  if (key === 'model') {
-    return { model: value || DEFAULT_MODEL }
-  }
-  if (key === 'openaiBaseUrl') {
-    return { openaiBaseUrl: value }
-  }
-  if (key === 'approvalMode') {
-    return { approvalMode: value as ApprovalMode }
-  }
-  if (key === 'allowOutsideWorkspace') {
-    return { allowOutsideWorkspace: value === 'true' }
-  }
-  if (key === 'contextWindow.autoCompact') {
-    return { contextWindow: { autoCompact: value === 'true' } }
-  }
-  if (key === 'contextWindow.compactThresholdTokens') {
-    return { contextWindow: { compactThresholdTokens: Number.parseInt(value, 10) } }
-  }
-  throw new Error(`Unsupported config key: ${key}`)
-}
-
-function collectOption(value: string, previous: string[]): string[] {
-  return [...previous, value]
-}
-
-function formatChatGptLoginMessage(auth: { accountId?: string; apiKey?: string }): string {
-  const accountSuffix = auth.accountId ? ` (${auth.accountId})` : ''
-  const backend = auth.apiKey ? 'OpenAI API token exchange enabled' : 'ChatGPT backend auth enabled'
-  return `Logged in with ChatGPT${accountSuffix}. ${backend}.`
-}
-
-function parsePartialImagesOption(options: { partialImages?: string }): { partialImages?: number } {
-  if (!options.partialImages) {
-    return {}
-  }
-  const partialImages = Number.parseInt(options.partialImages, 10)
-  if (!Number.isFinite(partialImages)) {
-    throw new Error(`Invalid partial image count: ${options.partialImages}`)
-  }
-  return { partialImages }
-}
-
-function nonEmptyArrayField<TField extends string>(
-  field: TField,
-  values: string[] | undefined
-): Record<TField, string[]> | Record<string, never> {
-  return values && values.length > 0 ? { [field]: values } as Record<TField, string[]> : {}
 }
 
 async function writeStarterFile(filePath: string, content: string): Promise<void> {

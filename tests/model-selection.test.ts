@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { selectResponseModel } from '../src/agent/model-selection.js'
+import { selectResponseModel, shouldDisableResponseStore } from '../src/agent/model-selection.js'
 import { DEFAULT_CHATGPT_CODEX_BASE_URL, DEFAULT_CHATGPT_CODEX_MODEL } from '../src/constants.js'
 
 describe('selectResponseModel', () => {
@@ -28,5 +28,10 @@ describe('selectResponseModel', () => {
         'gpt-5'
       )
     ).toEqual({ model: 'gpt-5.3-codex-spark' })
+  })
+
+  it('disables response storage for ChatGPT backend auth', () => {
+    expect(shouldDisableResponseStore({ baseUrl: DEFAULT_CHATGPT_CODEX_BASE_URL })).toBe(true)
+    expect(shouldDisableResponseStore({})).toBe(false)
   })
 })

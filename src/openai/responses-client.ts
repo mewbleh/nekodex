@@ -17,6 +17,7 @@ export interface CreateResponseRequest {
   instructions: string
   input: unknown
   tools: ResponseToolSchema[]
+  store?: boolean
   previous_response_id?: string
   context_management?: Array<Record<string, unknown>>
 }
