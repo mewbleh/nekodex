@@ -29,11 +29,19 @@ describe('jwt helpers', () => {
 })
 
 describe('ChatGPT auth scopes', () => {
-  it('requests the Responses write scope during OAuth login', () => {
-    expect(OAUTH_SCOPES).toContain(REQUIRED_RESPONSES_SCOPE)
+  it('does not request API-only Responses scopes during OAuth login', () => {
+    expect(OAUTH_SCOPES).toEqual([
+      'openid',
+      'profile',
+      'email',
+      'offline_access',
+      'api.connectors.read',
+      'api.connectors.invoke'
+    ])
+    expect(OAUTH_SCOPES).not.toContain(REQUIRED_RESPONSES_SCOPE)
   })
 
-  it('rejects stored ChatGPT tokens that cannot write Responses', async () => {
+  it('rejects stored ChatGPT auth without an API-capable token', async () => {
     const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'nekodex-auth-'))
     const store = new ConfigStore(homeDir)
     await store.saveAuth({
@@ -42,7 +50,25 @@ describe('ChatGPT auth scopes', () => {
       accountId: 'account-123'
     })
 
-    await expect(new AuthManager(store).resolveAuth()).rejects.toThrow(REQUIRED_RESPONSES_SCOPE)
+    await expect(new AuthManager(store).resolveAuth()).rejects.toThrow('API-capable token')
+    await fs.rm(homeDir, { recursive: true, force: true })
+  })
+
+  it('uses the exchanged API token for stored ChatGPT auth', async () => {
+    const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'nekodex-auth-'))
+    const store = new ConfigStore(homeDir)
+    await store.saveAuth({
+      mode: 'chatgpt',
+      apiKey: 'nekodex-exchanged-api-token',
+      accessToken: makeJwt({ scope: 'openid profile' }),
+      accountId: 'account-123'
+    })
+
+    await expect(new AuthManager(store).resolveAuth()).resolves.toMatchObject({
+      mode: 'chatgpt',
+      token: 'nekodex-exchanged-api-token',
+      accountId: 'account-123'
+    })
     await fs.rm(homeDir, { recursive: true, force: true })
   })
 

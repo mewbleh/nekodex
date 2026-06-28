@@ -5,7 +5,7 @@ Nekodex is a lightweight TypeScript agent CLI inspired by Codex. It supports:
 - OpenAI API-key auth
 - ChatGPT browser login with PKCE
 - ChatGPT device-code login
-- Terminal UI with `nekodex tui`
+- React/Ink terminal UI with `nekodex tui`
 - Persistent memories with `nekodex memory`
 - `AGENTS.md`, `AGENT.md`, and `SKILL.md` instruction loading
 - OpenAI-hosted Responses tools via config
@@ -41,13 +41,18 @@ pnpm start auth login --chatgpt
 pnpm start auth login --device-code
 ```
 
-If a previous ChatGPT login fails with a missing `api.responses.write` scope,
-refresh the stored credentials:
+ChatGPT login uses the allowed ChatGPT OAuth scopes, then exchanges the signed-in
+account token for an API-capable token used with the Responses API. If an older
+Nekodex build sent you to an `invalid_scope` callback for `api.responses.write`,
+upgrade and retry login:
 
 ```bash
 nekodex auth logout
 nekodex auth login --chatgpt
 ```
+
+If the API-token exchange is not available for the account, use
+`nekodex auth login --api-key`.
 
 Useful options:
 

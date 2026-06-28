@@ -19,8 +19,7 @@ export const OAUTH_SCOPES = [
   'email',
   'offline_access',
   'api.connectors.read',
-  'api.connectors.invoke',
-  REQUIRED_RESPONSES_SCOPE
+  'api.connectors.invoke'
 ]
 
 const OAUTH_SCOPE = OAUTH_SCOPES.join(' ')
@@ -278,7 +277,15 @@ export class OAuthClient {
   }
 
   private async withApiKey(tokens: OAuthTokens): Promise<OAuthTokens> {
-    const apiKey = await this.obtainApiKey(tokens.idToken).catch(() => undefined)
+    const apiKey = await this.obtainApiKey(tokens.idToken).catch((error: unknown) => {
+      throw new AuthError(
+        [
+          'ChatGPT sign-in completed, but Nekodex could not obtain an API-capable token for the Responses API.',
+          `API token exchange failed: ${formatAxiosError(error)}.`,
+          'Run `nekodex auth login --api-key` if this ChatGPT account cannot mint an API token.'
+        ].join(' ')
+      )
+    })
     return { ...tokens, apiKey }
   }
 
@@ -298,7 +305,11 @@ export class OAuthClient {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
       }
     )
-    return response.data.access_token
+    const apiKey = response.data.access_token?.trim()
+    if (!apiKey) {
+      throw new AuthError('API token exchange response did not include an access token.')
+    }
+    return apiKey
   }
 }
 
@@ -439,9 +450,24 @@ function handleCallbackRequest(
 
 function formatAxiosError(error: unknown): string {
   if (axios.isAxiosError(error)) {
-    return error.response
-      ? `HTTP ${error.response.status}`
-      : (error.message ?? 'request failed')
+    if (error.response) {
+      return `HTTP ${error.response.status}${formatResponseDetail(error.response.data)}`
+    }
+    return error.message ?? 'request failed'
   }
   return error instanceof Error ? error.message : String(error)
+}
+
+function formatResponseDetail(detail: unknown): string {
+  if (!detail) {
+    return ''
+  }
+  if (typeof detail === 'string') {
+    return `: ${detail}`
+  }
+  try {
+    return `: ${JSON.stringify(detail)}`
+  } catch {
+    return `: ${String(detail)}`
+  }
 }

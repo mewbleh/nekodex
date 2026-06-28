@@ -67,13 +67,7 @@ export class AuthManager {
     }
 
     const refreshedAuth = await this.refreshChatGptAuthIfNeeded(storedAuth)
-    const token = refreshedAuth.apiKey ?? refreshedAuth.accessToken
-    if (!token) {
-      throw new AuthError('Stored ChatGPT auth is missing an access token.')
-    }
-    if (!refreshedAuth.apiKey) {
-      ensureChatGptAccessTokenCanUseResponses(token)
-    }
+    const token = getChatGptResponsesToken(refreshedAuth)
 
     return {
       mode: 'chatgpt',
@@ -123,16 +117,19 @@ export class AuthManager {
   }
 }
 
-function ensureChatGptAccessTokenCanUseResponses(accessToken: string): void {
-  const scopes = readJwtScopes(accessToken)
-  if (scopes.includes(REQUIRED_RESPONSES_SCOPE)) {
-    return
+function getChatGptResponsesToken(auth: StoredAuth): string {
+  if (auth.apiKey) {
+    return auth.apiKey
+  }
+
+  if (auth.accessToken && readJwtScopes(auth.accessToken).includes(REQUIRED_RESPONSES_SCOPE)) {
+    return auth.accessToken
   }
 
   throw new AuthError(
     [
-      `Stored ChatGPT auth is missing the ${REQUIRED_RESPONSES_SCOPE} scope required for the Responses API.`,
-      'Run `nekodex auth logout` and then `nekodex auth login --chatgpt` to request the updated scope, or use `nekodex auth login --api-key`.'
+      'Stored ChatGPT auth does not include an API-capable token for the Responses API.',
+      'Run `nekodex auth logout` and then `nekodex auth login --chatgpt` to retry the API-token exchange, or use `nekodex auth login --api-key`.'
     ].join(' ')
   )
 }
