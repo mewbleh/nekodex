@@ -1,6 +1,6 @@
 {
   "name": "nekodex",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Lightweight TypeScript agent CLI inspired by Codex.",
   "type": "module",
   "bin": {

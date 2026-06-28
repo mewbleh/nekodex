@@ -1,4 +1,5 @@
 import { createInterface } from 'node:readline'
+import { APP_VERSION } from '../constants.js'
 import type { ApprovalMode } from '../config/schema.js'
 import { ToolRegistry } from '../tools/registry.js'
 
@@ -61,7 +62,7 @@ async function handleRequest(
       protocolVersion: '2024-11-05',
       serverInfo: {
         name: 'nekodex',
-        version: '1.0.1'
+        version: APP_VERSION
       },
       capabilities: {
         tools: {}

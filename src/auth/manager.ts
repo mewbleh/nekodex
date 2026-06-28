@@ -2,8 +2,13 @@ import { TOKEN_REFRESH_WINDOW_MS } from '../constants.js'
 import { AuthError } from '../errors.js'
 import type { ConfigStore } from '../config/store.js'
 import type { StoredAuth } from '../config/schema.js'
-import { readJwtExpirationMs } from './jwt.js'
-import { OAuthClient, type OAuthOptions, type OAuthTokens } from './oauth.js'
+import { readJwtExpirationMs, readJwtScopes } from './jwt.js'
+import {
+  OAuthClient,
+  REQUIRED_RESPONSES_SCOPE,
+  type OAuthOptions,
+  type OAuthTokens
+} from './oauth.js'
 
 export interface ResolvedAuth {
   mode: 'api-key' | 'chatgpt'
@@ -66,6 +71,9 @@ export class AuthManager {
     if (!token) {
       throw new AuthError('Stored ChatGPT auth is missing an access token.')
     }
+    if (!refreshedAuth.apiKey) {
+      ensureChatGptAccessTokenCanUseResponses(token)
+    }
 
     return {
       mode: 'chatgpt',
@@ -113,6 +121,20 @@ export class AuthManager {
     await this.store.saveAuth(nextAuth)
     return nextAuth
   }
+}
+
+function ensureChatGptAccessTokenCanUseResponses(accessToken: string): void {
+  const scopes = readJwtScopes(accessToken)
+  if (scopes.includes(REQUIRED_RESPONSES_SCOPE)) {
+    return
+  }
+
+  throw new AuthError(
+    [
+      `Stored ChatGPT auth is missing the ${REQUIRED_RESPONSES_SCOPE} scope required for the Responses API.`,
+      'Run `nekodex auth logout` and then `nekodex auth login --chatgpt` to request the updated scope, or use `nekodex auth login --api-key`.'
+    ].join(' ')
+  )
 }
 
 export function maskSecret(secret: string | undefined): string {

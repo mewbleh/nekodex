@@ -30,6 +30,21 @@ export function readOpenAiAuthClaims(token: string): Record<string, unknown> {
   return authClaims as Record<string, unknown>
 }
 
+export function readJwtScopes(token: string): string[] {
+  const claims = readJwtClaims(token)
+  const scope = claims?.scope ?? claims?.scp
+
+  if (typeof scope === 'string') {
+    return scope.split(/\s+/).filter(Boolean)
+  }
+
+  if (Array.isArray(scope)) {
+    return scope.filter((value): value is string => typeof value === 'string')
+  }
+
+  return []
+}
+
 function toBase64(base64Url: string): string {
   const padded = base64Url.padEnd(base64Url.length + ((4 - (base64Url.length % 4)) % 4), '=')
   return padded.replaceAll('-', '+').replaceAll('_', '/')

@@ -11,8 +11,19 @@ import { AuthError } from '../errors.js'
 import { openExternalUrl } from '../platform.js'
 import { readOpenAiAuthClaims } from './jwt.js'
 
-const OAUTH_SCOPE =
-  'openid profile email offline_access api.connectors.read api.connectors.invoke'
+export const REQUIRED_RESPONSES_SCOPE = 'api.responses.write'
+
+export const OAUTH_SCOPES = [
+  'openid',
+  'profile',
+  'email',
+  'offline_access',
+  'api.connectors.read',
+  'api.connectors.invoke',
+  REQUIRED_RESPONSES_SCOPE
+]
+
+const OAUTH_SCOPE = OAUTH_SCOPES.join(' ')
 const TOKEN_EXCHANGE_GRANT_TYPE = 'urn:ietf:params:oauth:grant-type:token-exchange'
 const ID_TOKEN_TYPE = 'urn:ietf:params:oauth:token-type:id_token'
 const REQUESTED_API_KEY_TOKEN = 'openai-api-key'

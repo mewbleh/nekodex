@@ -8,7 +8,7 @@ import { Command } from 'commander'
 import { AuthManager, maskSecret } from './auth/manager.js'
 import { ConfigStore } from './config/store.js'
 import type { ApprovalMode } from './config/schema.js'
-import { DEFAULT_AUTH_ISSUER, DEFAULT_MODEL, OAUTH_CLIENT_ID } from './constants.js'
+import { APP_VERSION, DEFAULT_AUTH_ISSUER, DEFAULT_MODEL, OAUTH_CLIENT_ID } from './constants.js'
 import { AgentRunner } from './agent/runner.js'
 import { NekodexError } from './errors.js'
 import { MemoryStore } from './memory/store.js'
@@ -21,10 +21,11 @@ const program = new Command()
 program
   .name('nekodex')
   .description('Lightweight TypeScript agent CLI.')
-  .version('1.0.1')
+  .version(APP_VERSION)
   .option('-C, --cwd <path>', 'workspace directory', process.cwd())
   .option('-m, --model <model>', 'model to use')
   .option('-y, --yes', 'approve tool calls automatically')
+  .option('--plain', 'use the simple readline chat instead of the TUI')
   .argument('[prompt...]', 'prompt to run')
   .action(async (promptParts: string[], options: RootOptions) => {
     await runChat(promptParts.join(' '), options)
@@ -36,6 +37,7 @@ program
   .option('-C, --cwd <path>', 'workspace directory', process.cwd())
   .option('-m, --model <model>', 'model to use')
   .option('-y, --yes', 'approve tool calls automatically')
+  .option('--plain', 'use the simple readline chat instead of the TUI')
   .argument('[prompt...]', 'prompt to run')
   .action(async (promptParts: string[], options: RootOptions) => {
     await runChat(promptParts.join(' '), options)
@@ -361,6 +363,7 @@ interface RootOptions {
   cwd: string
   model?: string
   yes?: boolean
+  plain?: boolean
 }
 
 interface LoginOptions {
@@ -389,15 +392,27 @@ async function runChat(prompt: string, options: RootOptions): Promise<void> {
     return
   }
 
+  if (!options.plain && process.stdout.isTTY && process.stdin.isTTY) {
+    startTui({
+      configStore: store,
+      config,
+      workspaceRoot,
+      model: options.model,
+      approvalMode: options.yes ? 'auto' : config.approvalMode
+    })
+    return
+  }
+
   await runInteractiveChat(runner)
 }
 
 async function runInteractiveChat(runner: AgentRunner): Promise<void> {
   const readline = createInterface({ input, output })
   try {
-    console.log('Nekodex interactive chat. Type /exit to quit.')
+    console.log('\x1b[96mNekodex\x1b[0m interactive chat')
+    console.log('\x1b[90mType /exit to quit. Run `nekodex tui` for the full terminal UI.\x1b[0m')
     while (true) {
-      const prompt = await readline.question('> ')
+      const prompt = await readline.question('\x1b[92mnekodex>\x1b[0m ')
       if (prompt.trim() === '/exit') {
         return
       }

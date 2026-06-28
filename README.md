@@ -41,6 +41,14 @@ pnpm start auth login --chatgpt
 pnpm start auth login --device-code
 ```
 
+If a previous ChatGPT login fails with a missing `api.responses.write` scope,
+refresh the stored credentials:
+
+```bash
+nekodex auth logout
+nekodex auth login --chatgpt
+```
+
 Useful options:
 
 ```bash
