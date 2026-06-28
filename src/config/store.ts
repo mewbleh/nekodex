@@ -14,6 +14,10 @@ const AUTH_FILE_NAME = 'auth.json'
 const MEMORY_FILE_NAME = 'memories.json'
 const PRIVATE_FILE_MODE = 0o600
 
+type ConfigPatch = Omit<Partial<NekodexConfig>, 'contextWindow'> & {
+  contextWindow?: Partial<NekodexConfig['contextWindow']>
+}
+
 export class ConfigStore {
   readonly homeDir: string
   readonly configPath: string
@@ -40,9 +44,16 @@ export class ConfigStore {
     await this.writeJsonFile(this.configPath, config)
   }
 
-  async patchConfig(patch: Partial<NekodexConfig>): Promise<NekodexConfig> {
+  async patchConfig(patch: ConfigPatch): Promise<NekodexConfig> {
     const current = await this.loadConfig()
-    const next = configSchema.parse({ ...current, ...patch })
+    const next = configSchema.parse({
+      ...current,
+      ...patch,
+      contextWindow: {
+        ...current.contextWindow,
+        ...patch.contextWindow
+      }
+    })
     await this.saveConfig(next)
     return next
   }

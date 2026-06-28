@@ -1,7 +1,14 @@
 import { createInterface } from 'node:readline/promises'
 import { stdin as input, stdout as output } from 'node:process'
 import { ToolExecutionError } from '../errors.js'
-import { listFilesTool, readFileTool, replaceInFileTool, searchFilesTool, writeFileTool } from './filesystem.js'
+import {
+  listFilesTool,
+  readFileTool,
+  replaceInFileTool,
+  searchFilesTool,
+  writeFileTool
+} from './filesystem.js'
+import { generateImageTool } from './image-generation.js'
 import { runCommandTool } from './shell.js'
 import type { AgentTool, ToolExecutionContext, ToolResult } from './types.js'
 
@@ -15,6 +22,7 @@ export class ToolRegistry {
       searchFilesTool,
       writeFileTool,
       replaceInFileTool,
+      generateImageTool,
       runCommandTool
     ])
   }

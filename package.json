@@ -1,5 +1,5 @@
 {
-  "name": "@mewbleh/nekodex",
+  "name": "nekodex",
   "version": "1.0.0",
   "description": "Lightweight TypeScript agent CLI inspired by Codex.",
   "type": "module",

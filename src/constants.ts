@@ -10,6 +10,12 @@ export const MAX_FILE_READ_BYTES = 120_000
 export const MAX_SEARCH_FILE_BYTES = 1_000_000
 export const OAUTH_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann'
 export const TOKEN_REFRESH_WINDOW_MS = 5 * 60 * 1000
+export const DEFAULT_COMPACT_THRESHOLD_TOKENS = 200_000
+export const DEFAULT_IMAGE_MODEL = 'gpt-image-2'
+export const DEFAULT_IMAGE_OUTPUT_DIR = 'generated-images'
+export const DEFAULT_IMAGE_OUTPUT_FORMAT = 'png'
+export const DEFAULT_IMAGE_QUALITY = 'medium'
+export const DEFAULT_IMAGE_SIZE = '1024x1024'
 
 export const IGNORED_DIRECTORY_NAMES = new Set([
   '.git',

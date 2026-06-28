@@ -18,6 +18,7 @@ export interface CreateResponseRequest {
   input: unknown
   tools: ResponseToolSchema[]
   previous_response_id?: string
+  context_management?: Array<Record<string, unknown>>
 }
 
 export interface ResponseOutputMessage {
@@ -32,9 +33,17 @@ export interface ResponseFunctionCall {
   arguments: string
 }
 
+export interface ResponseImageGenerationCall {
+  type: 'image_generation_call'
+  id?: string
+  result?: string
+}
+
 export interface OpenAiResponse {
   id: string
-  output?: Array<ResponseOutputMessage | ResponseFunctionCall | Record<string, unknown>>
+  output?: Array<
+    ResponseOutputMessage | ResponseFunctionCall | ResponseImageGenerationCall | Record<string, unknown>
+  >
   output_text?: string
 }
 

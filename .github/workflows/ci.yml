@@ -48,6 +48,9 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
+      - name: Use npm package name
+        if: env.NODE_AUTH_TOKEN != ''
+        run: npm pkg set name=@mewbleh/nekodex
       - name: Publish to npm
         if: env.NODE_AUTH_TOKEN != ''
         run: npm publish --access public

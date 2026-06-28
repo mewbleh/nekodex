@@ -1,5 +1,9 @@
 import { z } from 'zod'
-import { DEFAULT_MODEL, DEFAULT_OPENAI_BASE_URL } from '../constants.js'
+import {
+  DEFAULT_COMPACT_THRESHOLD_TOKENS,
+  DEFAULT_MODEL,
+  DEFAULT_OPENAI_BASE_URL
+} from '../constants.js'
 
 export const approvalModeSchema = z.enum(['ask', 'auto'])
 export type ApprovalMode = z.infer<typeof approvalModeSchema>
@@ -8,7 +12,8 @@ export const openAiHostedToolSchema = z
   .object({
     type: z.string().min(1),
     vectorStoreIds: z.array(z.string().min(1)).optional(),
-    container: z.unknown().optional()
+    container: z.unknown().optional(),
+    partialImages: z.number().int().min(0).max(3).optional()
   })
   .passthrough()
 export type OpenAiHostedToolConfig = z.infer<typeof openAiHostedToolSchema>
@@ -22,13 +27,26 @@ export const mcpServerSchema = z.object({
 })
 export type McpServerConfig = z.infer<typeof mcpServerSchema>
 
+export const contextWindowSchema = z
+  .object({
+    autoCompact: z.boolean().default(true),
+    compactThresholdTokens: z
+      .number()
+      .int()
+      .positive()
+      .default(DEFAULT_COMPACT_THRESHOLD_TOKENS)
+  })
+  .default({})
+export type ContextWindowConfig = z.infer<typeof contextWindowSchema>
+
 export const configSchema = z.object({
   model: z.string().min(1).default(DEFAULT_MODEL),
   openaiBaseUrl: z.string().url().default(DEFAULT_OPENAI_BASE_URL),
   approvalMode: approvalModeSchema.default('ask'),
   allowOutsideWorkspace: z.boolean().default(false),
   openAiHostedTools: z.array(openAiHostedToolSchema).default([]),
-  mcpServers: z.array(mcpServerSchema).default([])
+  mcpServers: z.array(mcpServerSchema).default([]),
+  contextWindow: contextWindowSchema
 })
 
 export type NekodexConfig = z.infer<typeof configSchema>

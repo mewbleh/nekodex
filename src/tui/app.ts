@@ -5,6 +5,9 @@ import type { ConfigStore } from '../config/store.js'
 import { MemoryStore } from '../memory/store.js'
 import { AgentRunner } from '../agent/runner.js'
 
+const STATUS_ANIMATION_INTERVAL_MS = 120
+const STATUS_ANIMATION_FRAMES = ['|', '/', '-', '\\']
+
 export interface TuiOptions {
   configStore: ConfigStore
   config: NekodexConfig
@@ -64,6 +67,38 @@ export function startTui(options: TuiOptions): void {
     }
   })
 
+  let statusAnimationTimer: NodeJS.Timeout | null = null
+  let statusAnimationIndex = 0
+  let currentStatusText = 'Ready'
+
+  const setStatus = (text: string): void => {
+    currentStatusText = text
+    if (!statusAnimationTimer) {
+      status.setContent(text)
+    }
+    screen.render()
+  }
+
+  const startStatusAnimation = (): void => {
+    stopStatusAnimation('Running...')
+    currentStatusText = 'Running...'
+    statusAnimationTimer = setInterval(() => {
+      const frame = STATUS_ANIMATION_FRAMES[statusAnimationIndex % STATUS_ANIMATION_FRAMES.length]
+      statusAnimationIndex += 1
+      status.setContent(`${frame} ${currentStatusText}`)
+      screen.render()
+    }, STATUS_ANIMATION_INTERVAL_MS)
+  }
+
+  const stopStatusAnimation = (nextStatus = 'Ready'): void => {
+    if (statusAnimationTimer) {
+      clearInterval(statusAnimationTimer)
+      statusAnimationTimer = null
+    }
+    statusAnimationIndex = 0
+    setStatus(nextStatus)
+  }
+
   const runner = new AgentRunner({
     authManager: new AuthManager(options.configStore),
     config: options.config,
@@ -73,7 +108,7 @@ export function startTui(options: TuiOptions): void {
     approvalMode: options.approvalMode,
     onAssistantText: (text) => appendLog(log, text),
     onStatus: (text) => {
-      status.setContent(text)
+      currentStatusText = text
       appendLog(log, `{gray-fg}${text}{/gray-fg}`)
       screen.render()
     }
@@ -92,7 +127,7 @@ export function startTui(options: TuiOptions): void {
 
     isRunning = true
     appendLog(log, `{bold}> ${prompt}{/bold}`)
-    status.setContent('Running...')
+    startStatusAnimation()
     screen.render()
 
     void runner
@@ -102,13 +137,16 @@ export function startTui(options: TuiOptions): void {
       })
       .finally(() => {
         isRunning = false
-        status.setContent('Ready')
+        stopStatusAnimation('Ready')
         input.focus()
         screen.render()
       })
   })
 
-  screen.key(['q', 'C-c'], () => process.exit(0))
+  screen.key(['q', 'C-c'], () => {
+    stopStatusAnimation('Exiting...')
+    process.exit(0)
+  })
   input.focus()
   screen.render()
 }

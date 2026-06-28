@@ -9,7 +9,8 @@ describe('buildConfiguredOpenAiTools', () => {
       openAiHostedTools: [
         { type: 'web_search' },
         { type: 'file_search', vectorStoreIds: ['vs_123'] },
-        { type: 'code_interpreter' }
+        { type: 'code_interpreter' },
+        { type: 'image_generation', partialImages: 2 }
       ],
       mcpServers: [
         {
@@ -26,6 +27,7 @@ describe('buildConfiguredOpenAiTools', () => {
       { type: 'web_search' },
       { type: 'file_search', vector_store_ids: ['vs_123'] },
       { type: 'code_interpreter', container: { type: 'auto' } },
+      { type: 'image_generation', partial_images: 2 },
       {
         type: 'mcp',
         server_label: 'docs',

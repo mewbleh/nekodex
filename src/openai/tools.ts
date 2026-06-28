@@ -3,6 +3,7 @@ import type { ResponseToolSchema } from './responses-client.js'
 
 const FILE_SEARCH_TOOL_TYPE = 'file_search'
 const CODE_INTERPRETER_TOOL_TYPE = 'code_interpreter'
+const IMAGE_GENERATION_TOOL_TYPE = 'image_generation'
 const MCP_TOOL_TYPE = 'mcp'
 
 export function buildConfiguredOpenAiTools(config: NekodexConfig): ResponseToolSchema[] {
@@ -25,6 +26,13 @@ function normalizeHostedTool(tool: OpenAiHostedToolConfig): ResponseToolSchema {
     return {
       type: CODE_INTERPRETER_TOOL_TYPE,
       container: tool.container ?? { type: 'auto' }
+    }
+  }
+
+  if (tool.type === IMAGE_GENERATION_TOOL_TYPE) {
+    return {
+      type: IMAGE_GENERATION_TOOL_TYPE,
+      ...(tool.partialImages ? { partial_images: tool.partialImages } : {})
     }
   }
 

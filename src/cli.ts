@@ -233,14 +233,19 @@ tools
 tools
   .command('add-openai')
   .description('Add an OpenAI-hosted Responses API tool.')
-  .argument('<type>', 'tool type, for example web_search, file_search, or code_interpreter')
+  .argument(
+    '<type>',
+    'tool type, for example web_search, file_search, code_interpreter, or image_generation'
+  )
   .option('--vector-store-id <id>', 'vector store id for file_search; repeat for more', collectOption, [])
-  .action(async (type: string, options: { vectorStoreId?: string[] }) => {
+  .option('--partial-images <count>', 'partial image count for hosted image_generation')
+  .action(async (type: string, options: { vectorStoreId?: string[]; partialImages?: string }) => {
     const store = new ConfigStore()
     const current = await store.loadConfig()
     const nextTool = {
       type,
-      ...(options.vectorStoreId ? { vectorStoreIds: options.vectorStoreId } : {})
+      ...nonEmptyArrayField('vectorStoreIds', options.vectorStoreId),
+      ...parsePartialImagesOption(options)
     }
     await store.patchConfig({
       openAiHostedTools: [...current.openAiHostedTools, nextTool]
@@ -289,7 +294,7 @@ mcp
             serverLabel: label,
             serverUrl: url,
             authorizationEnvVar: options.authEnv,
-            allowedTools: options.allowedTool,
+            ...nonEmptyArrayField('allowedTools', options.allowedTool),
             requireApproval: options.approval
           }
         ]
@@ -396,11 +401,35 @@ function parseConfigPatch(key: string, value: string) {
   if (key === 'allowOutsideWorkspace') {
     return { allowOutsideWorkspace: value === 'true' }
   }
+  if (key === 'contextWindow.autoCompact') {
+    return { contextWindow: { autoCompact: value === 'true' } }
+  }
+  if (key === 'contextWindow.compactThresholdTokens') {
+    return { contextWindow: { compactThresholdTokens: Number.parseInt(value, 10) } }
+  }
   throw new Error(`Unsupported config key: ${key}`)
 }
 
 function collectOption(value: string, previous: string[]): string[] {
   return [...previous, value]
+}
+
+function parsePartialImagesOption(options: { partialImages?: string }): { partialImages?: number } {
+  if (!options.partialImages) {
+    return {}
+  }
+  const partialImages = Number.parseInt(options.partialImages, 10)
+  if (!Number.isFinite(partialImages)) {
+    throw new Error(`Invalid partial image count: ${options.partialImages}`)
+  }
+  return { partialImages }
+}
+
+function nonEmptyArrayField<TField extends string>(
+  field: TField,
+  values: string[] | undefined
+): Record<TField, string[]> | Record<string, never> {
+  return values && values.length > 0 ? { [field]: values } as Record<TField, string[]> : {}
 }
 
 async function writeStarterFile(filePath: string, content: string): Promise<void> {

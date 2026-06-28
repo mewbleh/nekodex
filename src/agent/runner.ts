@@ -11,6 +11,8 @@ import {
 } from '../openai/responses-client.js'
 import { buildConfiguredOpenAiTools } from '../openai/tools.js'
 import { ToolRegistry } from '../tools/registry.js'
+import { buildContextManagement } from './context-management.js'
+import { saveResponseImages } from './generated-images.js'
 import { buildInstructions } from './instructions.js'
 
 export interface AgentRunnerOptions {
@@ -50,10 +52,15 @@ export class AgentRunner {
         instructions,
         input,
         tools: [...this.toolRegistry.schemas(), ...buildConfiguredOpenAiTools(this.options.config)],
-        previous_response_id: this.previousResponseId
+        previous_response_id: this.previousResponseId,
+        context_management: buildContextManagement(this.options.config)
       })
 
       this.previousResponseId = response.id
+      const savedImagePaths = await saveResponseImages(response, this.options.workspaceRoot)
+      for (const savedImagePath of savedImagePaths) {
+        this.writeStatus(`saved image: ${savedImagePath}`)
+      }
       printResponseText(response, this.writeAssistantText)
 
       const functionCalls = getFunctionCalls(response)
@@ -67,7 +74,9 @@ export class AgentRunner {
         const result = await this.toolRegistry.execute(functionCall.name, functionCall.arguments, {
           workspaceRoot: path.resolve(this.options.workspaceRoot),
           approvalMode: this.options.approvalMode ?? this.options.config.approvalMode,
-          allowOutsideWorkspace: this.options.config.allowOutsideWorkspace
+          allowOutsideWorkspace: this.options.config.allowOutsideWorkspace,
+          openAiToken: auth.token,
+          openAiBaseUrl: this.options.config.openaiBaseUrl
         })
         outputs.push({
           type: 'function_call_output',

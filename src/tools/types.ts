@@ -4,6 +4,8 @@ export interface ToolExecutionContext {
   workspaceRoot: string
   approvalMode: 'ask' | 'auto'
   allowOutsideWorkspace: boolean
+  openAiToken?: string
+  openAiBaseUrl?: string
 }
 
 export interface ToolResult {
