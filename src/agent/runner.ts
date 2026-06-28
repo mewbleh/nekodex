@@ -61,7 +61,7 @@ export class AgentRunner {
     }
     const turnItems: unknown[] = [userInputItem]
     let input: unknown = shouldUseStorelessHistory
-      ? [...this.conversationItems, ...turnItems]
+      ? buildStorelessInput(this.conversationItems, turnItems)
       : [userInputItem]
 
     for (let step = 0; step < DEFAULT_MAX_AGENT_STEPS; step += 1) {
@@ -136,7 +136,7 @@ export class AgentRunner {
 
       if (shouldUseStorelessHistory) {
         turnItems.push(...getResponseHistoryItems(response), ...outputs)
-        input = [...this.conversationItems, ...turnItems]
+        input = buildStorelessInput(this.conversationItems, turnItems)
       } else {
         input = outputs
       }
@@ -156,7 +156,7 @@ export class AgentRunner {
       return
     }
     this.previousResponseId = session.previousResponseId
-    this.conversationItems = session.conversationItems
+    this.conversationItems = sanitizeStorelessHistoryItems(session.conversationItems)
   }
 
   private async saveSession(): Promise<void> {
@@ -185,18 +185,45 @@ export class AgentRunner {
 
 function getResponseHistoryItems(response: OpenAiResponse): unknown[] {
   if (response.output?.length) {
-    return response.output
+    return sanitizeStorelessHistoryItems(response.output)
   }
   if (!response.output_text) {
     return []
   }
-  return [
+  return sanitizeStorelessHistoryItems([
     {
       type: 'message',
       role: 'assistant',
       content: [{ type: 'output_text', text: response.output_text }]
     }
-  ]
+  ])
+}
+
+function buildStorelessInput(...itemGroups: unknown[][]): unknown[] {
+  return sanitizeStorelessHistoryItems(itemGroups.flat())
+}
+
+export function sanitizeStorelessHistoryItems(items: unknown[]): unknown[] {
+  return items.map((item) => sanitizeStorelessHistoryItem(item))
+}
+
+export function sanitizeStorelessHistoryItem(item: unknown): unknown {
+  if (Array.isArray(item)) {
+    return item.map((value) => sanitizeStorelessHistoryItem(value))
+  }
+
+  if (!isRecord(item)) {
+    return item
+  }
+
+  const sanitized: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(item)) {
+    if (key === 'id') {
+      continue
+    }
+    sanitized[key] = sanitizeStorelessHistoryItem(value)
+  }
+  return sanitized
 }
 
 function getFunctionCalls(response: OpenAiResponse): ResponseFunctionCall[] {
@@ -232,4 +259,8 @@ function isOutputMessage(item: unknown): item is ResponseOutputMessage {
     item !== null &&
     (item as { type?: unknown }).type === 'message'
   )
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
 }

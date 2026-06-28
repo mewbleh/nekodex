@@ -8,6 +8,7 @@ import type { ConfigStore } from '../config/store.js'
 import { APP_VERSION } from '../constants.js'
 import { MemoryStore } from '../memory/store.js'
 import { SessionStore } from '../session/store.js'
+import { buildTuiStatus } from './status.js'
 
 const ANIMATION_INTERVAL_MS = 120
 const ANIMATION_FRAMES = ['-', '\\', '|', '/']
@@ -51,6 +52,8 @@ function NekodexTui({ options }: { options: TuiOptions }) {
   ])
   const nextIdRef = useRef(2)
   const abortControllerRef = useRef<AbortController | null>(null)
+  const authManagerRef = useRef<AuthManager | null>(null)
+  const sessionStoreRef = useRef<SessionStore | null>(null)
   const runnerRef = useRef<AgentRunner | null>(null)
 
   const appendTranscript = useCallback((role: TranscriptRole, text: string) => {
@@ -65,13 +68,21 @@ function NekodexTui({ options }: { options: TuiOptions }) {
     })
   }, [])
 
+  if (!authManagerRef.current) {
+    authManagerRef.current = new AuthManager(options.configStore)
+  }
+
+  if (!sessionStoreRef.current) {
+    sessionStoreRef.current = new SessionStore(options.configStore)
+  }
+
   if (!runnerRef.current) {
     runnerRef.current = new AgentRunner({
-      authManager: new AuthManager(options.configStore),
+      authManager: authManagerRef.current,
       config: options.config,
       workspaceRoot: options.workspaceRoot,
       memoryStore: new MemoryStore(options.configStore),
-      sessionStore: new SessionStore(options.configStore),
+      sessionStore: sessionStoreRef.current,
       model: options.model,
       approvalMode: options.approvalMode,
       onAssistantText: (text) => appendTranscript('assistant', text),
@@ -95,6 +106,48 @@ function NekodexTui({ options }: { options: TuiOptions }) {
     return () => clearInterval(interval)
   }, [isRunning])
 
+  const runSlashCommand = useCallback(
+    async (commandLine: string) => {
+      const command = parseSlashCommand(commandLine)
+
+      if (command === 'clear') {
+        setTranscript([])
+        setStatus('Ready')
+        return
+      }
+
+      if (command === 'exit' || command === 'quit') {
+        exit()
+        return
+      }
+
+      if (command === 'help') {
+        appendTranscript('status', SLASH_COMMAND_HELP)
+        return
+      }
+
+      if (command === 'status') {
+        setStatus('Status')
+        appendTranscript(
+          'status',
+          await buildTuiStatus({
+            approvalMode: options.approvalMode,
+            authManager: authManagerRef.current as AuthManager,
+            config: options.config,
+            model: options.model,
+            sessionStore: sessionStoreRef.current as SessionStore,
+            workspaceRoot: options.workspaceRoot
+          })
+        )
+        setStatus('Ready')
+        return
+      }
+
+      appendTranscript('error', `Unknown command: /${command || ''}. Try /help.`)
+    },
+    [appendTranscript, exit, options]
+  )
+
   const submitPrompt = useCallback(() => {
     const trimmedPrompt = prompt.trim()
     if (!trimmedPrompt || isRunning) {
@@ -102,9 +155,19 @@ function NekodexTui({ options }: { options: TuiOptions }) {
     }
 
     setPrompt('')
+    appendTranscript('user', trimmedPrompt)
+
+    if (trimmedPrompt.startsWith('/')) {
+      void runSlashCommand(trimmedPrompt).catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error)
+        appendTranscript('error', message)
+        setStatus('Ready')
+      })
+      return
+    }
+
     setIsRunning(true)
     setStatus('Thinking')
-    appendTranscript('user', trimmedPrompt)
     const abortController = new AbortController()
     abortControllerRef.current = abortController
 
@@ -125,7 +188,7 @@ function NekodexTui({ options }: { options: TuiOptions }) {
         setIsRunning(false)
         setStatus('Ready')
       })
-  }, [appendTranscript, isRunning, prompt])
+  }, [appendTranscript, isRunning, prompt, runSlashCommand])
 
   useInput((input, key) => {
     if (key.ctrl && input === 'c') {
@@ -269,9 +332,20 @@ function Composer({ isRunning, prompt }: { isRunning: boolean; prompt: string })
 function Footer() {
   return (
     <Box marginTop={1}>
-      <Text color="gray">Enter send | Esc clear | Ctrl+C quit | nekodex auth/config/tools/mcp menus</Text>
+      <Text color="gray">Enter send | Esc clear | Ctrl+C quit | /status /help /clear /exit</Text>
     </Box>
   )
+}
+
+const SLASH_COMMAND_HELP = [
+  '/status  show auth, model, context, approval, and sandbox',
+  '/clear   clear this TUI transcript',
+  '/exit    quit Nekodex',
+  '/help    show slash commands'
+].join('\n')
+
+function parseSlashCommand(value: string): string {
+  return value.slice(1).trim().split(/\s+/)[0]?.toLowerCase() ?? ''
 }
 
 function roleStyle(role: TranscriptRole): {

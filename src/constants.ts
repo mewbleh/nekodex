@@ -1,5 +1,5 @@
 export const APP_NAME = 'nekodex'
-export const APP_VERSION = '1.0.11'
+export const APP_VERSION = '1.0.12'
 // ref: https://developers.openai.com/codex/models
 export const DEFAULT_MODEL = 'gpt-5.5'
 export const DEFAULT_CHATGPT_CODEX_MODEL = 'gpt-5.5'
