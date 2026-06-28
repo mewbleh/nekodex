@@ -43,6 +43,11 @@ interface CommandHubAction {
 type CommandHubPhase = 'busy' | 'done' | 'input' | 'menu'
 
 export async function startCommandHub(options: CommandHubOptions): Promise<void> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    printCommandHubFallback(options)
+    return
+  }
+
   const instance = render(<CommandHub options={options} />)
   await instance.waitUntilExit()
 }
@@ -586,4 +591,15 @@ function parseMcpApproval(value: string | undefined): 'always' | 'never' | undef
 
 function maskInput(value: string): string {
   return value ? '*'.repeat(Math.min(value.length, 32)) : ''
+}
+
+function printCommandHubFallback(options: CommandHubOptions): void {
+  const store = options.configStore ?? new ConfigStore()
+  const actions = buildCommandHubActions(options.group, store).filter((action) => action.id !== 'exit')
+  console.log(`nekodex ${options.group}`)
+  console.log('Run this command in an interactive terminal to open the menu.')
+  console.log('Available actions:')
+  for (const action of actions) {
+    console.log(`- ${action.label}: ${action.description}`)
+  }
 }
