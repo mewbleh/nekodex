@@ -14,6 +14,7 @@ import { NekodexError } from './errors.js'
 import { MemoryStore } from './memory/store.js'
 import { startTui } from './tui/app.js'
 import { serveMcp } from './mcp/server.js'
+import { getPlatformInfo } from './platform.js'
 
 const program = new Command()
 
@@ -73,6 +74,36 @@ program
       '# Nekodex Skill Guide\n\nUse this file for reusable project workflows, commands, and task-specific playbooks.\n'
     )
     console.log('Initialized AGENT.md and SKILL.md.')
+  })
+
+program
+  .command('doctor')
+  .description('Show platform and runtime support diagnostics.')
+  .option('--json', 'print diagnostics as JSON')
+  .action((options: { json?: boolean }) => {
+    const platformInfo = getPlatformInfo()
+    const diagnostics = {
+      platform: platformInfo.platform,
+      nodePlatform: platformInfo.nodePlatform,
+      arch: platformInfo.arch,
+      nodeVersion: process.version,
+      configHome: platformInfo.configHome,
+      browserOpeners: platformInfo.browserOpeners.map((opener) => opener.command),
+      notes: platformInfo.notes
+    }
+
+    if (options.json) {
+      console.log(JSON.stringify(diagnostics, null, 2))
+      return
+    }
+
+    console.log(`Platform: ${diagnostics.platform} (${diagnostics.nodePlatform}/${diagnostics.arch})`)
+    console.log(`Node: ${diagnostics.nodeVersion}`)
+    console.log(`Config home: ${diagnostics.configHome}`)
+    console.log(`Browser openers: ${diagnostics.browserOpeners.join(', ') || 'none'}`)
+    for (const note of diagnostics.notes) {
+      console.log(`Note: ${note}`)
+    }
   })
 
 const auth = program.command('auth').description('Manage Nekodex auth.')

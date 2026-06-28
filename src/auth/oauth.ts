@@ -1,6 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto'
 import http, { type IncomingMessage, type ServerResponse } from 'node:http'
-import { spawn } from 'node:child_process'
 import axios, { type AxiosInstance } from 'axios'
 import {
   DEFAULT_AUTH_ISSUER,
@@ -9,6 +8,7 @@ import {
   OAUTH_CLIENT_ID
 } from '../constants.js'
 import { AuthError } from '../errors.js'
+import { openExternalUrl } from '../platform.js'
 import { readOpenAiAuthClaims } from './jwt.js'
 
 const OAUTH_SCOPE =
@@ -85,7 +85,7 @@ export class OAuthClient {
     const redirectUri = `http://localhost:${server.port}/auth/callback`
     const authUrl = this.buildAuthorizeUrl(redirectUri, pkce, state)
 
-    openUrl(authUrl)
+    openExternalUrl(authUrl)
     console.error(
       `Starting local login server on http://localhost:${server.port}.\nIf your browser did not open, visit:\n\n${authUrl}\n`
     )
@@ -328,26 +328,6 @@ function delay(durationMs: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, durationMs)
   })
-}
-
-function openUrl(url: string): void {
-  const commandByPlatform: Record<NodeJS.Platform, string> = {
-    aix: 'xdg-open',
-    android: 'xdg-open',
-    darwin: 'open',
-    freebsd: 'xdg-open',
-    haiku: 'xdg-open',
-    linux: 'xdg-open',
-    openbsd: 'xdg-open',
-    sunos: 'xdg-open',
-    win32: 'cmd',
-    cygwin: 'cmd',
-    netbsd: 'xdg-open'
-  }
-  const command = commandByPlatform[process.platform]
-  const args = process.platform === 'win32' ? ['/c', 'start', '""', url] : [url]
-  const child = spawn(command, args, { detached: true, stdio: 'ignore' })
-  child.unref()
 }
 
 interface CallbackServer {

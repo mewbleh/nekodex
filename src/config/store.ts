@@ -1,5 +1,4 @@
 import { promises as fs } from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 import {
   type NekodexConfig,
@@ -7,7 +6,7 @@ import {
   configSchema,
   storedAuthSchema
 } from './schema.js'
-import { APP_NAME } from '../constants.js'
+import { defaultConfigHome } from '../platform.js'
 
 const CONFIG_FILE_NAME = 'config.json'
 const AUTH_FILE_NAME = 'auth.json'
@@ -103,7 +102,7 @@ export class ConfigStore {
 }
 
 export function defaultNekodexHome(): string {
-  return process.env.NEKODEX_HOME?.trim() || path.join(os.homedir(), `.${APP_NAME}`)
+  return defaultConfigHome()
 }
 
 function isNotFoundError(error: unknown): boolean {

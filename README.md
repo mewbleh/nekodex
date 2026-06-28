@@ -15,7 +15,7 @@ Nekodex is a lightweight TypeScript agent CLI inspired by Codex. It supports:
 - Automatic context-window compaction
 - An OpenAI Responses API agent loop
 - Workspace tools for file reads, writes, exact search, exact replacement, and shell commands
-- Local config in `~/.nekodex`
+- Platform-aware local config storage
 
 ## Quick Start
 
@@ -57,6 +57,20 @@ nekodex config set contextWindow.compactThresholdTokens 200000
 nekodex config set approvalMode auto
 nekodex config show
 ```
+
+## Platform Support
+
+Nekodex runs on Node.js 22+ across Linux, Windows, macOS, and Android through
+Termux. Use `nekodex doctor` to inspect platform detection, config paths, and
+browser-login helpers.
+
+- Linux: install `xdg-utils` if browser login should auto-open.
+- Windows: config lives under `%APPDATA%\Nekodex` by default.
+- macOS: config lives under `~/Library/Application Support/Nekodex` by default.
+- Termux: install with `pkg install nodejs-lts`, then use device-code auth or
+  install `termux-api` for `termux-open-url` browser opening.
+
+Override the config directory anywhere with `NEKODEX_HOME`.
 
 ## Publishing
 
