@@ -277,16 +277,8 @@ export class OAuthClient {
   }
 
   private async withApiKey(tokens: OAuthTokens): Promise<OAuthTokens> {
-    const apiKey = await this.obtainApiKey(tokens.idToken).catch((error: unknown) => {
-      throw new AuthError(
-        [
-          'ChatGPT sign-in completed, but Nekodex could not obtain an API-capable token for the Responses API.',
-          `API token exchange failed: ${formatAxiosError(error)}.`,
-          'Run `nekodex auth login --api-key` if this ChatGPT account cannot mint an API token.'
-        ].join(' ')
-      )
-    })
-    return { ...tokens, apiKey }
+    const apiKey = await this.obtainApiKey(tokens.idToken).catch(() => undefined)
+    return apiKey ? { ...tokens, apiKey } : tokens
   }
 
   private async obtainApiKey(idToken: string): Promise<string> {

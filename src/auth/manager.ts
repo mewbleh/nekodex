@@ -1,20 +1,20 @@
-import { TOKEN_REFRESH_WINDOW_MS } from '../constants.js'
+import { DEFAULT_CHATGPT_CODEX_BASE_URL, TOKEN_REFRESH_WINDOW_MS } from '../constants.js'
 import { AuthError } from '../errors.js'
 import type { ConfigStore } from '../config/store.js'
 import type { StoredAuth } from '../config/schema.js'
-import { readJwtExpirationMs, readJwtScopes } from './jwt.js'
-import {
-  OAuthClient,
-  REQUIRED_RESPONSES_SCOPE,
-  type OAuthOptions,
-  type OAuthTokens
-} from './oauth.js'
+import { readJwtExpirationMs, readOpenAiAuthClaims } from './jwt.js'
+import { OAuthClient, type OAuthOptions, type OAuthTokens } from './oauth.js'
+
+const CHATGPT_ACCOUNT_ID_HEADER = 'ChatGPT-Account-ID'
+const CHATGPT_FEDRAMP_HEADER = 'X-OpenAI-Fedramp'
 
 export interface ResolvedAuth {
   mode: 'api-key' | 'chatgpt'
   token: string
   source: 'env' | 'stored'
   accountId?: string
+  baseUrl?: string
+  headers?: Record<string, string>
 }
 
 export class AuthManager {
@@ -66,15 +66,7 @@ export class AuthManager {
       return { mode: 'api-key', token: storedAuth.apiKey, source: 'stored' }
     }
 
-    const refreshedAuth = await this.refreshChatGptAuthIfNeeded(storedAuth)
-    const token = getChatGptResponsesToken(refreshedAuth)
-
-    return {
-      mode: 'chatgpt',
-      token,
-      source: 'stored',
-      accountId: refreshedAuth.accountId
-    }
+    return resolveStoredChatGptAuth(await this.refreshChatGptAuthIfNeeded(storedAuth))
   }
 
   private async persistOAuthTokens(tokens: OAuthTokens): Promise<StoredAuth> {
@@ -117,21 +109,56 @@ export class AuthManager {
   }
 }
 
-function getChatGptResponsesToken(auth: StoredAuth): string {
+function resolveStoredChatGptAuth(auth: StoredAuth): ResolvedAuth {
   if (auth.apiKey) {
-    return auth.apiKey
+    return {
+      mode: 'chatgpt',
+      token: auth.apiKey,
+      source: 'stored',
+      accountId: getStoredChatGptAccountId(auth)
+    }
   }
 
-  if (auth.accessToken && readJwtScopes(auth.accessToken).includes(REQUIRED_RESPONSES_SCOPE)) {
-    return auth.accessToken
+  if (!auth.accessToken) {
+    throw new AuthError('Stored ChatGPT auth is missing an access token.')
   }
 
-  throw new AuthError(
-    [
-      'Stored ChatGPT auth does not include an API-capable token for the Responses API.',
-      'Run `nekodex auth logout` and then `nekodex auth login --chatgpt` to retry the API-token exchange, or use `nekodex auth login --api-key`.'
-    ].join(' ')
-  )
+  const accountId = getStoredChatGptAccountId(auth)
+  return {
+    mode: 'chatgpt',
+    token: auth.accessToken,
+    source: 'stored',
+    accountId,
+    baseUrl: DEFAULT_CHATGPT_CODEX_BASE_URL,
+    headers: buildChatGptBackendHeaders(accountId, isFedrampAccount(auth))
+  }
+}
+
+function buildChatGptBackendHeaders(
+  accountId: string | undefined,
+  isFedrampAccount: boolean
+): Record<string, string> {
+  return {
+    ...(accountId ? { [CHATGPT_ACCOUNT_ID_HEADER]: accountId } : {}),
+    ...(isFedrampAccount ? { [CHATGPT_FEDRAMP_HEADER]: 'true' } : {})
+  }
+}
+
+function getStoredChatGptAccountId(auth: StoredAuth): string | undefined {
+  if (auth.accountId) {
+    return auth.accountId
+  }
+
+  const accountId = auth.idToken ? readOpenAiAuthClaims(auth.idToken).chatgpt_account_id : undefined
+  return typeof accountId === 'string' ? accountId : undefined
+}
+
+function isFedrampAccount(auth: StoredAuth): boolean {
+  if (!auth.idToken) {
+    return false
+  }
+
+  return readOpenAiAuthClaims(auth.idToken).chatgpt_account_is_fedramp === true
 }
 
 export function maskSecret(secret: string | undefined): string {

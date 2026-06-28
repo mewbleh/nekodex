@@ -41,18 +41,16 @@ pnpm start auth login --chatgpt
 pnpm start auth login --device-code
 ```
 
-ChatGPT login uses the allowed ChatGPT OAuth scopes, then exchanges the signed-in
-account token for an API-capable token used with the Responses API. If an older
-Nekodex build sent you to an `invalid_scope` callback for `api.responses.write`,
-upgrade and retry login:
+ChatGPT login uses allowed ChatGPT OAuth scopes. Nekodex first tries the optional
+OpenAI API-token exchange; if the account cannot mint that token, it falls back
+to the ChatGPT Codex backend auth path used by Codex. If an older Nekodex build
+sent you to an `invalid_scope` callback for `api.responses.write`, upgrade and
+retry login:
 
 ```bash
 nekodex auth logout
 nekodex auth login --chatgpt
 ```
-
-If the API-token exchange is not available for the account, use
-`nekodex auth login --api-key`.
 
 Useful options:
 

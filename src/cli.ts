@@ -133,7 +133,7 @@ auth
         issuer: options.issuer,
         clientId: options.clientId
       })
-      console.log(`Logged in with ChatGPT${savedAuth.accountId ? ` (${savedAuth.accountId})` : ''}.`)
+      console.log(formatChatGptLoginMessage(savedAuth))
       return
     }
 
@@ -141,7 +141,7 @@ auth
       issuer: options.issuer,
       clientId: options.clientId
     })
-    console.log(`Logged in with ChatGPT${savedAuth.accountId ? ` (${savedAuth.accountId})` : ''}.`)
+    console.log(formatChatGptLoginMessage(savedAuth))
   })
 
 auth
@@ -458,6 +458,12 @@ function parseConfigPatch(key: string, value: string) {
 
 function collectOption(value: string, previous: string[]): string[] {
   return [...previous, value]
+}
+
+function formatChatGptLoginMessage(auth: { accountId?: string; apiKey?: string }): string {
+  const accountSuffix = auth.accountId ? ` (${auth.accountId})` : ''
+  const backend = auth.apiKey ? 'OpenAI API token exchange enabled' : 'ChatGPT backend auth enabled'
+  return `Logged in with ChatGPT${accountSuffix}. ${backend}.`
 }
 
 function parsePartialImagesOption(options: { partialImages?: string }): { partialImages?: number } {

@@ -47,14 +47,21 @@ export class AgentRunner {
     ]
 
     for (let step = 0; step < DEFAULT_MAX_AGENT_STEPS; step += 1) {
-      const response = await this.client.createResponse(auth.token, {
-        model: this.options.model ?? this.options.config.model,
-        instructions,
-        input,
-        tools: [...this.toolRegistry.schemas(), ...buildConfiguredOpenAiTools(this.options.config)],
-        previous_response_id: this.previousResponseId,
-        context_management: buildContextManagement(this.options.config)
-      })
+      const response = await this.client.createResponse(
+        {
+          token: auth.token,
+          baseUrl: auth.baseUrl,
+          headers: auth.headers
+        },
+        {
+          model: this.options.model ?? this.options.config.model,
+          instructions,
+          input,
+          tools: [...this.toolRegistry.schemas(), ...buildConfiguredOpenAiTools(this.options.config)],
+          previous_response_id: this.previousResponseId,
+          context_management: buildContextManagement(this.options.config)
+        }
+      )
 
       this.previousResponseId = response.id
       const savedImagePaths = await saveResponseImages(response, this.options.workspaceRoot)

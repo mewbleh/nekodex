@@ -1,5 +1,5 @@
 import axios, { type AxiosInstance } from 'axios'
-import { DEFAULT_OPENAI_BASE_URL } from '../constants.js'
+import { APP_VERSION, DEFAULT_OPENAI_BASE_URL } from '../constants.js'
 import { NekodexError } from '../errors.js'
 
 export interface FunctionToolSchema {
@@ -19,6 +19,12 @@ export interface CreateResponseRequest {
   tools: ResponseToolSchema[]
   previous_response_id?: string
   context_management?: Array<Record<string, unknown>>
+}
+
+export interface ResponseAuth {
+  token: string
+  baseUrl?: string
+  headers?: Record<string, string>
 }
 
 export interface ResponseOutputMessage {
@@ -49,22 +55,24 @@ export interface OpenAiResponse {
 
 export class ResponsesClient {
   private readonly client: AxiosInstance
+  private readonly defaultBaseUrl: string
 
   constructor(baseUrl = process.env.OPENAI_BASE_URL || DEFAULT_OPENAI_BASE_URL) {
+    this.defaultBaseUrl = baseUrl
     this.client = axios.create({
-      baseURL: baseUrl.replace(/\/+$/, ''),
       timeout: 120_000
     })
   }
 
-  async createResponse(token: string, request: CreateResponseRequest): Promise<OpenAiResponse> {
+  async createResponse(auth: ResponseAuth, request: CreateResponseRequest): Promise<OpenAiResponse> {
     try {
-      const response = await this.client.post<OpenAiResponse>('/responses', request, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json'
+      const response = await this.client.post<OpenAiResponse>(
+        buildResponsesUrl(auth, this.defaultBaseUrl),
+        request,
+        {
+          headers: buildRequestHeaders(auth)
         }
-      })
+      )
       return response.data
     } catch (error) {
       if (axios.isAxiosError(error)) {
@@ -76,6 +84,24 @@ export class ResponsesClient {
       }
       throw error
     }
+  }
+}
+
+export function buildResponsesUrl(
+  auth: Pick<ResponseAuth, 'baseUrl'>,
+  defaultBaseUrl: string
+): string {
+  return `${(auth.baseUrl ?? defaultBaseUrl).replace(/\/+$/, '')}/responses`
+}
+
+export function buildRequestHeaders(auth: ResponseAuth): Record<string, string> {
+  return {
+    Authorization: `Bearer ${auth.token}`,
+    'Content-Type': 'application/json',
+    'User-Agent': `nekodex/${APP_VERSION}`,
+    originator: 'nekodex_cli',
+    version: APP_VERSION,
+    ...auth.headers
   }
 }
 

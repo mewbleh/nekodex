@@ -6,6 +6,7 @@ import { readJwtClaims, readJwtExpirationMs, readJwtScopes, readOpenAiAuthClaims
 import { AuthManager, maskSecret } from '../src/auth/manager.js'
 import { OAUTH_SCOPES, REQUIRED_RESPONSES_SCOPE } from '../src/auth/oauth.js'
 import { ConfigStore } from '../src/config/store.js'
+import { DEFAULT_CHATGPT_CODEX_BASE_URL } from '../src/constants.js'
 
 describe('jwt helpers', () => {
   it('reads jwt claims without verifying signatures', () => {
@@ -41,16 +42,30 @@ describe('ChatGPT auth scopes', () => {
     expect(OAUTH_SCOPES).not.toContain(REQUIRED_RESPONSES_SCOPE)
   })
 
-  it('rejects stored ChatGPT auth without an API-capable token', async () => {
+  it('uses ChatGPT backend auth when no exchanged API token exists', async () => {
     const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'nekodex-auth-'))
     const store = new ConfigStore(homeDir)
     await store.saveAuth({
       mode: 'chatgpt',
       accessToken: makeJwt({ scope: 'openid profile' }),
-      accountId: 'account-123'
+      idToken: makeJwt({
+        'https://api.openai.com/auth': {
+          chatgpt_account_id: 'account-123',
+          chatgpt_account_is_fedramp: true
+        }
+      })
     })
 
-    await expect(new AuthManager(store).resolveAuth()).rejects.toThrow('API-capable token')
+    await expect(new AuthManager(store).resolveAuth()).resolves.toMatchObject({
+      mode: 'chatgpt',
+      token: makeJwt({ scope: 'openid profile' }),
+      accountId: 'account-123',
+      baseUrl: DEFAULT_CHATGPT_CODEX_BASE_URL,
+      headers: {
+        'ChatGPT-Account-ID': 'account-123',
+        'X-OpenAI-Fedramp': 'true'
+      }
+    })
     await fs.rm(homeDir, { recursive: true, force: true })
   })
 
@@ -64,11 +79,14 @@ describe('ChatGPT auth scopes', () => {
       accountId: 'account-123'
     })
 
-    await expect(new AuthManager(store).resolveAuth()).resolves.toMatchObject({
+    const resolvedAuth = await new AuthManager(store).resolveAuth()
+    expect(resolvedAuth).toMatchObject({
       mode: 'chatgpt',
       token: 'nekodex-exchanged-api-token',
       accountId: 'account-123'
     })
+    expect(resolvedAuth.baseUrl).toBeUndefined()
+    expect(resolvedAuth.headers).toBeUndefined()
     await fs.rm(homeDir, { recursive: true, force: true })
   })
 
