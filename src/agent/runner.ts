@@ -122,6 +122,7 @@ export class AgentRunner {
         const result = await this.toolRegistry.execute(functionCall.name, functionCall.arguments, {
           workspaceRoot: path.resolve(this.options.workspaceRoot),
           approvalMode: this.options.approvalMode ?? this.options.config.approvalMode,
+          sandboxMode: this.options.config.sandboxMode,
           allowOutsideWorkspace: this.options.config.allowOutsideWorkspace,
           openAiToken: auth.token,
           openAiBaseUrl: this.options.config.openaiBaseUrl

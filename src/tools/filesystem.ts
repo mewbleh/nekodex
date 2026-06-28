@@ -8,6 +8,7 @@ import {
 import { ToolExecutionError } from '../errors.js'
 import type { AgentTool, ToolResult } from './types.js'
 import { resolveWorkspacePath } from './path-utils.js'
+import { assertCanWritePath, canReadOutsideWorkspace } from './sandbox.js'
 
 const textDecoder = new TextDecoder('utf8', { fatal: false })
 
@@ -33,7 +34,7 @@ export const listFilesTool: AgentTool<{ path?: string; maxDepth?: number }> = {
     const root = resolveWorkspacePath(
       context.workspaceRoot,
       input.path,
-      context.allowOutsideWorkspace
+      canReadOutsideWorkspace(context)
     )
     const maxDepth = normalizeDepth(input.maxDepth)
     const entries = await listEntries(root, context.workspaceRoot, maxDepth)
@@ -66,7 +67,7 @@ export const readFileTool: AgentTool<{ path: string; maxBytes?: number }> = {
     const filePath = resolveWorkspacePath(
       context.workspaceRoot,
       input.path,
-      context.allowOutsideWorkspace
+      canReadOutsideWorkspace(context)
     )
     const maxBytes = Math.min(input.maxBytes ?? MAX_FILE_READ_BYTES, MAX_FILE_READ_BYTES)
     const file = await fs.open(filePath, 'r')
@@ -109,8 +110,9 @@ export const writeFileTool: AgentTool<{ path: string; content: string }> = {
     const filePath = resolveWorkspacePath(
       context.workspaceRoot,
       input.path,
-      context.allowOutsideWorkspace
+      canReadOutsideWorkspace(context)
     )
+    assertCanWritePath(context, filePath)
     await fs.mkdir(path.dirname(filePath), { recursive: true })
     await fs.writeFile(filePath, input.content, 'utf8')
     return ok({ path: input.path, bytesWritten: Buffer.byteLength(input.content, 'utf8') })
@@ -150,8 +152,9 @@ export const replaceInFileTool: AgentTool<{
     const filePath = resolveWorkspacePath(
       context.workspaceRoot,
       input.path,
-      context.allowOutsideWorkspace
+      canReadOutsideWorkspace(context)
     )
+    assertCanWritePath(context, filePath)
     const original = await fs.readFile(filePath, 'utf8')
     const occurrences = countOccurrences(original, input.search)
 
@@ -195,7 +198,7 @@ export const searchFilesTool: AgentTool<{ query: string; path?: string; maxResul
     const searchRoot = resolveWorkspacePath(
       context.workspaceRoot,
       input.path,
-      context.allowOutsideWorkspace
+      canReadOutsideWorkspace(context)
     )
     const maxResults = Math.min(input.maxResults ?? 50, 200)
     const matches = await searchFiles(searchRoot, context.workspaceRoot, input.query, maxResults)

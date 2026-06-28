@@ -7,7 +7,7 @@ import { stdin as input, stdout as output } from 'node:process'
 import { Command } from 'commander'
 import { AuthManager, maskSecret } from './auth/manager.js'
 import { ConfigStore } from './config/store.js'
-import type { ApprovalMode } from './config/schema.js'
+import type { ApprovalMode, NekodexConfig, SandboxMode } from './config/schema.js'
 import { APP_VERSION, DEFAULT_AUTH_ISSUER, OAUTH_CLIENT_ID } from './constants.js'
 import { AgentRunner } from './agent/runner.js'
 import { NekodexError } from './errors.js'
@@ -35,6 +35,8 @@ program
   .option('-C, --cwd <path>', 'workspace directory', process.cwd())
   .option('-m, --model <model>', 'model to use')
   .option('-y, --yes', 'approve tool calls automatically')
+  .option('--sandbox <mode>', 'sandbox mode: read-only, workspace-write, danger-full-access')
+  .option('--danger-full-access', 'disable workspace sandbox restrictions')
   .option('--plain', 'use the simple readline chat instead of the TUI')
   .argument('[prompt...]', 'prompt to run')
   .action(async (promptParts: string[], options: RootOptions) => {
@@ -47,6 +49,8 @@ program
   .option('-C, --cwd <path>', 'workspace directory', process.cwd())
   .option('-m, --model <model>', 'model to use')
   .option('-y, --yes', 'approve tool calls automatically')
+  .option('--sandbox <mode>', 'sandbox mode: read-only, workspace-write, danger-full-access')
+  .option('--danger-full-access', 'disable workspace sandbox restrictions')
   .option('--plain', 'use the simple readline chat instead of the TUI')
   .argument('[prompt...]', 'prompt to run')
   .action(async (promptParts: string[], options: RootOptions) => {
@@ -59,9 +63,11 @@ program
   .option('-C, --cwd <path>', 'workspace directory', process.cwd())
   .option('-m, --model <model>', 'model to use')
   .option('-y, --yes', 'approve tool calls automatically')
+  .option('--sandbox <mode>', 'sandbox mode: read-only, workspace-write, danger-full-access')
+  .option('--danger-full-access', 'disable workspace sandbox restrictions')
   .action(async (options: RootOptions) => {
     const store = new ConfigStore()
-    const config = await store.loadConfig()
+    const config = resolveRuntimeConfig(await store.loadConfig(), options)
     startTui({
       configStore: store,
       config,
@@ -372,12 +378,15 @@ mcp
   .description('Run Nekodex as a local stdio MCP server exposing workspace tools.')
   .option('-C, --cwd <path>', 'workspace directory', process.cwd())
   .option('--approval <mode>', 'approval mode: ask or auto')
-  .action(async (options: { cwd: string; approval?: ApprovalMode }) => {
+  .option('--sandbox <mode>', 'sandbox mode: read-only, workspace-write, danger-full-access')
+  .option('--danger-full-access', 'disable workspace sandbox restrictions')
+  .action(async (options: { cwd: string; approval?: ApprovalMode; sandbox?: string; dangerFullAccess?: boolean }) => {
     const store = new ConfigStore()
-    const current = await store.loadConfig()
+    const current = resolveRuntimeConfig(await store.loadConfig(), options)
     await serveMcp({
       workspaceRoot: path.resolve(options.cwd),
       approvalMode: options.approval ?? current.approvalMode,
+      sandboxMode: current.sandboxMode,
       allowOutsideWorkspace: current.allowOutsideWorkspace
     })
   })
@@ -386,6 +395,8 @@ interface RootOptions {
   cwd: string
   model?: string
   yes?: boolean
+  sandbox?: string
+  dangerFullAccess?: boolean
   plain?: boolean
 }
 
@@ -399,7 +410,7 @@ interface LoginOptions {
 
 async function runChat(prompt: string, options: RootOptions): Promise<void> {
   const store = new ConfigStore()
-  const config = await store.loadConfig()
+  const config = resolveRuntimeConfig(await store.loadConfig(), options)
   const workspaceRoot = path.resolve(options.cwd)
   const runner = new AgentRunner({
     authManager: new AuthManager(store),
@@ -428,6 +439,23 @@ async function runChat(prompt: string, options: RootOptions): Promise<void> {
   }
 
   await runInteractiveChat(runner)
+}
+
+function resolveRuntimeConfig(config: NekodexConfig, options: { sandbox?: string; dangerFullAccess?: boolean }): NekodexConfig {
+  if (options.dangerFullAccess) {
+    return { ...config, sandboxMode: 'danger-full-access' }
+  }
+  if (!options.sandbox) {
+    return config
+  }
+  if (!isSandboxMode(options.sandbox)) {
+    throw new Error(`Unsupported sandbox mode: ${options.sandbox}`)
+  }
+  return { ...config, sandboxMode: options.sandbox }
+}
+
+function isSandboxMode(value: string): value is SandboxMode {
+  return value === 'read-only' || value === 'workspace-write' || value === 'danger-full-access'
 }
 
 async function runInteractiveChat(runner: AgentRunner): Promise<void> {

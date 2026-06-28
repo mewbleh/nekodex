@@ -1,5 +1,5 @@
 import { maskSecret } from './auth/manager.js'
-import type { ApprovalMode, NekodexConfig, StoredAuth } from './config/schema.js'
+import type { ApprovalMode, NekodexConfig, SandboxMode, StoredAuth } from './config/schema.js'
 import { DEFAULT_MODEL } from './constants.js'
 
 export type ConfigPatch = Omit<Partial<NekodexConfig>, 'contextWindow'> & {
@@ -15,6 +15,9 @@ export function parseConfigPatch(key: string, value: string): ConfigPatch {
   }
   if (key === 'approvalMode') {
     return { approvalMode: value as ApprovalMode }
+  }
+  if (key === 'sandboxMode') {
+    return { sandboxMode: value as SandboxMode }
   }
   if (key === 'allowOutsideWorkspace') {
     return { allowOutsideWorkspace: parseBooleanValue(key, value) }

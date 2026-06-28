@@ -165,6 +165,7 @@ function NekodexTui({ options }: { options: TuiOptions }) {
   const frame = ANIMATION_FRAMES[frameIndex % ANIMATION_FRAMES.length]
   const approvalMode = options.approvalMode ?? options.config.approvalMode
   const contextMode = options.config.contextWindow.autoCompact ? 'auto' : 'manual'
+  const sandboxMode = options.config.sandboxMode
 
   return (
     <Box flexDirection="column" paddingX={1}>
@@ -174,6 +175,7 @@ function NekodexTui({ options }: { options: TuiOptions }) {
         frame={frame}
         isRunning={isRunning}
         model={model}
+        sandboxMode={sandboxMode}
         status={status}
         workspaceLabel={workspaceLabel}
       />
@@ -194,6 +196,7 @@ function Header({
   frame,
   isRunning,
   model,
+  sandboxMode,
   status,
   workspaceLabel
 }: {
@@ -202,6 +205,7 @@ function Header({
   frame: string
   isRunning: boolean
   model: string
+  sandboxMode: string
   status: string
   workspaceLabel: string
 }) {
@@ -222,6 +226,8 @@ function Header({
         <Text> {model}</Text>
         <Text color="gray"> | approval</Text>
         <Text> {approvalMode}</Text>
+        <Text color="gray"> | sandbox</Text>
+        <Text> {sandboxMode}</Text>
         <Text color="gray"> | context</Text>
         <Text> {contextMode}</Text>
       </Box>

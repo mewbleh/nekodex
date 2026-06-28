@@ -13,6 +13,7 @@ import {
 import { ToolExecutionError } from '../errors.js'
 import type { AgentTool, ToolResult } from './types.js'
 import { resolveWorkspacePath } from './path-utils.js'
+import { assertCanWritePath, canReadOutsideWorkspace } from './sandbox.js'
 
 const IMAGE_PROMPT_SLUG_LENGTH = 48
 
@@ -87,8 +88,9 @@ export const generateImageTool: AgentTool<GenerateImageInput> = {
     const outputPath = resolveWorkspacePath(
       context.workspaceRoot,
       requestedOutputPath,
-      context.allowOutsideWorkspace
+      canReadOutsideWorkspace(context)
     )
+    assertCanWritePath(context, outputPath)
     const requestBody = buildImageGenerationRequest(input)
     const baseUrl = (context.openAiBaseUrl ?? DEFAULT_OPENAI_BASE_URL).replace(/\/+$/, '')
 

@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process'
 import { DEFAULT_COMMAND_TIMEOUT_MS } from '../constants.js'
 import type { AgentTool, ToolResult } from './types.js'
 import { resolveWorkspacePath } from './path-utils.js'
+import { assertCanRunCommand, canResolveShellCwdOutsideWorkspace } from './sandbox.js'
 
 export const runCommandTool: AgentTool<{
   command: string
@@ -30,8 +31,9 @@ export const runCommandTool: AgentTool<{
     const cwd = resolveWorkspacePath(
       context.workspaceRoot,
       input.cwd,
-      context.allowOutsideWorkspace
+      canResolveShellCwdOutsideWorkspace(context)
     )
+    assertCanRunCommand(context, cwd)
     return runShellCommand(input.command, cwd, input.timeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS)
   }
 }

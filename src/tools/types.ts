@@ -1,8 +1,10 @@
 import type { FunctionToolSchema } from '../openai/responses-client.js'
+import type { SandboxMode } from '../config/schema.js'
 
 export interface ToolExecutionContext {
   workspaceRoot: string
   approvalMode: 'ask' | 'auto'
+  sandboxMode: SandboxMode
   allowOutsideWorkspace: boolean
   openAiToken?: string
   openAiBaseUrl?: string

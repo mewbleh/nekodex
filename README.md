@@ -14,6 +14,7 @@ Nekodex is a lightweight TypeScript agent CLI inspired by Codex. It supports:
 - Remote MCP tool configuration for OpenAI Responses
 - Local stdio MCP server with `nekodex mcp serve`
 - Automatic context-window compaction
+- Lightweight sandbox modes: `read-only`, `workspace-write`, and `danger-full-access`
 - An OpenAI Responses API agent loop
 - Workspace tools for file reads, writes, exact search, exact replacement, and shell commands
 - Platform-aware local config storage
@@ -62,6 +63,8 @@ Useful options:
 ```bash
 nekodex -C ./some-project -m gpt-5.5 -- "add tests for the parser"
 nekodex -y -- "run the test suite and fix failures"
+nekodex --sandbox read-only -- "review this repo without changing files"
+nekodex --danger-full-access -- "inspect a project that needs outside-workspace access"
 nekodex tui
 nekodex memory add --title "Project style" "Use strict TypeScript."
 nekodex tools add-openai web_search
@@ -71,6 +74,7 @@ nekodex mcp serve -C .
 nekodex config set contextWindow.autoCompact true
 nekodex config set contextWindow.compactThresholdTokens 200000
 nekodex config set approvalMode auto
+nekodex config set sandboxMode workspace-write
 nekodex config show
 ```
 

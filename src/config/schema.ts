@@ -8,6 +8,9 @@ import {
 export const approvalModeSchema = z.enum(['ask', 'auto'])
 export type ApprovalMode = z.infer<typeof approvalModeSchema>
 
+export const sandboxModeSchema = z.enum(['read-only', 'workspace-write', 'danger-full-access'])
+export type SandboxMode = z.infer<typeof sandboxModeSchema>
+
 export const openAiHostedToolSchema = z
   .object({
     type: z.string().min(1),
@@ -43,6 +46,7 @@ export const configSchema = z.object({
   model: z.string().min(1).default(DEFAULT_MODEL),
   openaiBaseUrl: z.string().url().default(DEFAULT_OPENAI_BASE_URL),
   approvalMode: approvalModeSchema.default('ask'),
+  sandboxMode: sandboxModeSchema.default('workspace-write'),
   allowOutsideWorkspace: z.boolean().default(false),
   openAiHostedTools: z.array(openAiHostedToolSchema).default([]),
   mcpServers: z.array(mcpServerSchema).default([]),

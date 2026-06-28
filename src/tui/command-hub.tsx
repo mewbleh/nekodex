@@ -1,7 +1,7 @@
 import { Box, Text, render, useApp, useInput } from 'ink'
 import { useMemo, useState } from 'react'
 import { AuthManager, maskSecret } from '../auth/manager.js'
-import type { ApprovalMode } from '../config/schema.js'
+import type { ApprovalMode, SandboxMode } from '../config/schema.js'
 import { ConfigStore } from '../config/store.js'
 import {
   formatAuthStatus,
@@ -16,6 +16,7 @@ import { MemoryStore } from '../memory/store.js'
 
 const REQUIRED_INPUT_MESSAGE = 'This field is required.'
 const VALID_APPROVAL_MODES = new Set(['ask', 'auto'])
+const VALID_SANDBOX_MODES = new Set(['read-only', 'workspace-write', 'danger-full-access'])
 const VALID_MCP_APPROVAL_MODES = new Set(['always', 'never'])
 
 export type CommandHubGroup = 'auth' | 'config' | 'mcp' | 'memory' | 'tools'
@@ -370,6 +371,18 @@ function buildConfigActions(store: ConfigStore): CommandHubAction[] {
           throw new Error('Approval mode must be ask or auto.')
         }
         return formatJson(await store.patchConfig({ approvalMode: approvalMode as ApprovalMode }))
+      }
+    },
+    {
+      id: 'set-sandbox',
+      label: 'Set sandbox mode',
+      description: 'choose read-only, workspace-write, or danger-full-access',
+      prompts: [{ label: 'Sandbox mode', name: 'sandboxMode', required: true }],
+      run: async ({ sandboxMode }) => {
+        if (!VALID_SANDBOX_MODES.has(sandboxMode)) {
+          throw new Error('Sandbox mode must be read-only, workspace-write, or danger-full-access.')
+        }
+        return formatJson(await store.patchConfig({ sandboxMode: sandboxMode as SandboxMode }))
       }
     },
     {
