@@ -12,6 +12,7 @@ import { APP_VERSION, DEFAULT_AUTH_ISSUER, OAUTH_CLIENT_ID } from './constants.j
 import { AgentRunner } from './agent/runner.js'
 import { NekodexError } from './errors.js'
 import { MemoryStore } from './memory/store.js'
+import { SessionStore } from './session/store.js'
 import { startTui } from './tui/app.js'
 import { startCommandHub } from './tui/command-hub.js'
 import { serveMcp } from './mcp/server.js'
@@ -405,6 +406,7 @@ async function runChat(prompt: string, options: RootOptions): Promise<void> {
     config,
     workspaceRoot,
     memoryStore: new MemoryStore(store),
+    sessionStore: new SessionStore(store),
     model: options.model,
     approvalMode: options.yes ? 'auto' : config.approvalMode
   })

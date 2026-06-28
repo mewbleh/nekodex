@@ -30,6 +30,10 @@ export interface ResponseAuth {
   headers?: Record<string, string>
 }
 
+export interface CreateResponseOptions {
+  signal?: AbortSignal
+}
+
 export interface ResponseOutputMessage {
   type: 'message'
   content?: Array<{ type: string; text?: string }>
@@ -67,14 +71,19 @@ export class ResponsesClient {
     })
   }
 
-  async createResponse(auth: ResponseAuth, request: CreateResponseRequest): Promise<OpenAiResponse> {
+  async createResponse(
+    auth: ResponseAuth,
+    request: CreateResponseRequest,
+    options: CreateResponseOptions = {}
+  ): Promise<OpenAiResponse> {
     try {
       const response = await this.client.post<OpenAiResponse | Readable>(
         buildResponsesUrl(auth, this.defaultBaseUrl),
         request,
         {
           headers: buildRequestHeaders(auth, request.stream),
-          responseType: request.stream ? 'stream' : 'json'
+          responseType: request.stream ? 'stream' : 'json',
+          signal: options.signal
         }
       )
       if (request.stream) {
@@ -82,6 +91,9 @@ export class ResponsesClient {
       }
       return response.data as OpenAiResponse
     } catch (error) {
+      if (axios.isCancel(error) || isAbortError(error)) {
+        throw new NekodexError('Request cancelled.')
+      }
       if (axios.isAxiosError(error)) {
         const status = error.response?.status
         const detail = await formatResponseDetail(error.response?.data)
@@ -130,7 +142,7 @@ async function parseResponseStream(stream: Readable): Promise<OpenAiResponse> {
   let responseId: string | undefined
 
   for await (const chunk of stream) {
-    buffer += Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk)
+    buffer += formatStreamChunk(chunk)
     buffer = buffer.replace(/\r\n/g, '\n')
 
     let boundaryIndex = buffer.indexOf('\n\n')
@@ -259,9 +271,32 @@ async function formatResponseDetail(detail: unknown): Promise<string> {
 async function readStreamText(stream: Readable): Promise<string> {
   const chunks: string[] = []
   for await (const chunk of stream) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk))
+    chunks.push(formatStreamChunk(chunk))
   }
   return chunks.join('')
+}
+
+function formatStreamChunk(chunk: unknown): string {
+  if (Buffer.isBuffer(chunk)) {
+    return chunk.toString('utf8')
+  }
+  if (typeof chunk === 'string') {
+    return chunk
+  }
+  try {
+    return JSON.stringify(chunk)
+  } catch {
+    return String(chunk)
+  }
+}
+
+function isAbortError(error: unknown): boolean {
+  return Boolean(
+    error &&
+      typeof error === 'object' &&
+      'name' in error &&
+      (error as { name?: unknown }).name === 'AbortError'
+  )
 }
 
 function formatDetail(detail: unknown): string {

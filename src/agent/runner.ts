@@ -3,6 +3,7 @@ import { DEFAULT_MAX_AGENT_STEPS } from '../constants.js'
 import type { AuthManager } from '../auth/manager.js'
 import type { NekodexConfig } from '../config/schema.js'
 import type { MemoryStore } from '../memory/store.js'
+import type { SessionStore } from '../session/store.js'
 import {
   ResponsesClient,
   type OpenAiResponse,
@@ -25,14 +26,20 @@ export interface AgentRunnerOptions {
   config: NekodexConfig
   workspaceRoot: string
   memoryStore?: MemoryStore
+  sessionStore?: SessionStore
   model?: string
   approvalMode?: 'ask' | 'auto'
   onAssistantText?: (text: string) => void
   onStatus?: (text: string) => void
 }
 
+export interface AgentRunOptions {
+  signal?: AbortSignal
+}
+
 export class AgentRunner {
   private conversationItems: unknown[] = []
+  private isSessionLoaded = false
   private previousResponseId: string | undefined
   private readonly client: ResponsesClient
   private readonly toolRegistry = ToolRegistry.withDefaultTools()
@@ -41,22 +48,21 @@ export class AgentRunner {
     this.client = new ResponsesClient(options.config.openaiBaseUrl)
   }
 
-  async run(prompt: string): Promise<void> {
+  async run(prompt: string, runOptions: AgentRunOptions = {}): Promise<void> {
+    await this.loadSessionIfNeeded()
     const auth = await this.options.authManager.resolveAuth()
     const shouldUseStorelessHistory = shouldDisableResponseStore(auth)
     const memoryInstructionBlock = (await this.options.memoryStore?.toInstructionBlock()) ?? ''
     const instructions = await buildInstructions(this.options.workspaceRoot, memoryInstructionBlock)
     const userInputItem = {
+      type: 'message',
       role: 'user',
       content: [{ type: 'input_text', text: prompt }]
     }
     const turnItems: unknown[] = [userInputItem]
-    let input: unknown = shouldUseStorelessHistory ? [...this.conversationItems, ...turnItems] : [
-      {
-        role: 'user',
-        content: [{ type: 'input_text', text: prompt }]
-      }
-    ]
+    let input: unknown = shouldUseStorelessHistory
+      ? [...this.conversationItems, ...turnItems]
+      : [userInputItem]
 
     for (let step = 0; step < DEFAULT_MAX_AGENT_STEPS; step += 1) {
       const selectedModel = selectResponseModel(
@@ -86,7 +92,8 @@ export class AgentRunner {
           stream: shouldUseChatGptBackendOptions ? true : undefined,
           previous_response_id: shouldUsePreviousResponseId(auth) ? this.previousResponseId : undefined,
           context_management: buildContextManagement(this.options.config)
-        }
+        },
+        { signal: runOptions.signal }
       )
 
       this.previousResponseId = response.id
@@ -105,6 +112,7 @@ export class AgentRunner {
             ...getResponseHistoryItems(response)
           ]
         }
+        await this.saveSession()
         return
       }
 
@@ -133,7 +141,28 @@ export class AgentRunner {
       }
     }
 
+    await this.saveSession()
     this.writeStatus(`Stopped after ${DEFAULT_MAX_AGENT_STEPS} agent steps.`)
+  }
+
+  private async loadSessionIfNeeded(): Promise<void> {
+    if (this.isSessionLoaded) {
+      return
+    }
+    this.isSessionLoaded = true
+    const session = await this.options.sessionStore?.load(this.options.workspaceRoot)
+    if (!session) {
+      return
+    }
+    this.previousResponseId = session.previousResponseId
+    this.conversationItems = session.conversationItems
+  }
+
+  private async saveSession(): Promise<void> {
+    await this.options.sessionStore?.save(this.options.workspaceRoot, {
+      previousResponseId: this.previousResponseId,
+      conversationItems: this.conversationItems
+    })
   }
 
   private readonly writeAssistantText = (text: string): void => {

@@ -1,5 +1,5 @@
 export const APP_NAME = 'nekodex'
-export const APP_VERSION = '1.0.9'
+export const APP_VERSION = '1.0.10'
 // ref: https://developers.openai.com/codex/models
 export const DEFAULT_MODEL = 'gpt-5.5'
 export const DEFAULT_CHATGPT_CODEX_MODEL = 'gpt-5.5'
@@ -20,6 +20,7 @@ export const DEFAULT_IMAGE_OUTPUT_DIR = 'generated-images'
 export const DEFAULT_IMAGE_OUTPUT_FORMAT = 'png'
 export const DEFAULT_IMAGE_QUALITY = 'medium'
 export const DEFAULT_IMAGE_SIZE = '1024x1024'
+export const MAX_SESSION_HISTORY_ITEMS = 200
 
 export const IGNORED_DIRECTORY_NAMES = new Set([
   '.git',

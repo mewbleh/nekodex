@@ -7,6 +7,7 @@ import type { NekodexConfig } from '../config/schema.js'
 import type { ConfigStore } from '../config/store.js'
 import { APP_VERSION } from '../constants.js'
 import { MemoryStore } from '../memory/store.js'
+import { SessionStore } from '../session/store.js'
 
 const ANIMATION_INTERVAL_MS = 120
 const ANIMATION_FRAMES = ['-', '\\', '|', '/']
@@ -49,6 +50,7 @@ function NekodexTui({ options }: { options: TuiOptions }) {
     }
   ])
   const nextIdRef = useRef(2)
+  const abortControllerRef = useRef<AbortController | null>(null)
   const runnerRef = useRef<AgentRunner | null>(null)
 
   const appendTranscript = useCallback((role: TranscriptRole, text: string) => {
@@ -69,6 +71,7 @@ function NekodexTui({ options }: { options: TuiOptions }) {
       config: options.config,
       workspaceRoot: options.workspaceRoot,
       memoryStore: new MemoryStore(options.configStore),
+      sessionStore: new SessionStore(options.configStore),
       model: options.model,
       approvalMode: options.approvalMode,
       onAssistantText: (text) => appendTranscript('assistant', text),
@@ -102,14 +105,23 @@ function NekodexTui({ options }: { options: TuiOptions }) {
     setIsRunning(true)
     setStatus('Thinking')
     appendTranscript('user', trimmedPrompt)
+    const abortController = new AbortController()
+    abortControllerRef.current = abortController
 
     void runnerRef.current
-      ?.run(trimmedPrompt)
+      ?.run(trimmedPrompt, { signal: abortController.signal })
       .catch((error: unknown) => {
+        if (abortController.signal.aborted) {
+          appendTranscript('status', 'Interrupted.')
+          return
+        }
         const message = error instanceof Error ? error.message : String(error)
         appendTranscript('error', message)
       })
       .finally(() => {
+        if (abortControllerRef.current === abortController) {
+          abortControllerRef.current = null
+        }
         setIsRunning(false)
         setStatus('Ready')
       })
@@ -117,6 +129,11 @@ function NekodexTui({ options }: { options: TuiOptions }) {
 
   useInput((input, key) => {
     if (key.ctrl && input === 'c') {
+      if (isRunning) {
+        setStatus('Stopping')
+        abortControllerRef.current?.abort()
+        return
+      }
       exit()
       return
     }

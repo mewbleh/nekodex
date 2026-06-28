@@ -11,6 +11,7 @@ import { defaultConfigHome } from '../platform.js'
 const CONFIG_FILE_NAME = 'config.json'
 const AUTH_FILE_NAME = 'auth.json'
 const MEMORY_FILE_NAME = 'memories.json'
+const SESSIONS_FILE_NAME = 'sessions.json'
 const PRIVATE_FILE_MODE = 0o600
 
 type ConfigPatch = Omit<Partial<NekodexConfig>, 'contextWindow'> & {
@@ -22,12 +23,14 @@ export class ConfigStore {
   readonly configPath: string
   readonly authPath: string
   readonly memoryPath: string
+  readonly sessionsPath: string
 
   constructor(homeDir = defaultNekodexHome()) {
     this.homeDir = homeDir
     this.configPath = path.join(homeDir, CONFIG_FILE_NAME)
     this.authPath = path.join(homeDir, AUTH_FILE_NAME)
     this.memoryPath = path.join(homeDir, MEMORY_FILE_NAME)
+    this.sessionsPath = path.join(homeDir, SESSIONS_FILE_NAME)
   }
 
   async loadConfig(): Promise<NekodexConfig> {
