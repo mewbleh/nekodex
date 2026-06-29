@@ -1,5 +1,6 @@
 import type { SelectedResponseModel } from '../agent/model-selection.js'
 import { selectResponseModel } from '../agent/model-selection.js'
+import { listInstructionSources } from '../agent/instructions.js'
 import type { ResolvedAuth } from '../auth/manager.js'
 import { maskSecret } from '../auth/manager.js'
 import type { NekodexConfig, StoredAuth } from '../config/schema.js'
@@ -31,6 +32,7 @@ export async function buildTuiStatus(options: BuildTuiStatusOptions): Promise<st
     options.authManager.status().catch(() => null),
     options.sessionStore.load(options.workspaceRoot).catch(() => null)
   ])
+  const instructionSources = await listInstructionSources(options.workspaceRoot).catch(() => [])
   const { authError, resolvedAuth } = await resolveAuthForStatus(options.authManager)
   const selectedModel = selectResponseModel(
     resolvedAuth ?? {},
@@ -47,6 +49,7 @@ export async function buildTuiStatus(options: BuildTuiStatusOptions): Promise<st
     `model: ${formatModelForStatus(selectedModel)}`,
     `reasoning: ${options.config.reasoningEffort}`,
     `context: ${contextMode}, approx ${formatNumber(approxTokens)} / ${formatNumber(compactThresholdTokens)} tokens, ${formatNumber(conversationItems.length)} session items`,
+    `instructions: ${formatInstructionSourcesForStatus(instructionSources)}`,
     `approval: ${options.approvalMode ?? options.config.approvalMode}`,
     `sandbox: ${options.config.sandboxMode}`
   ].join('\n')
@@ -99,6 +102,22 @@ function formatModelForStatus(selectedModel: SelectedResponseModel): string {
     return selectedModel.model
   }
   return `${selectedModel.model} (remapped from ${selectedModel.remappedFrom})`
+}
+
+function formatInstructionSourcesForStatus(
+  sources: Array<{ path: string; scope: string }>
+): string {
+  if (sources.length === 0) {
+    return 'none'
+  }
+
+  const counts = sources.reduce<Record<string, number>>((result, source) => {
+    result[source.scope] = (result[source.scope] ?? 0) + 1
+    return result
+  }, {})
+  return Object.entries(counts)
+    .map(([scope, count]) => `${count} ${scope}`)
+    .join(', ')
 }
 
 function formatNumber(value: number): string {

@@ -19,6 +19,7 @@ describe('slash commands', () => {
   it('finds commands by name and alias', () => {
     expect(findSlashCommand('/status')?.name).toBe('status')
     expect(findSlashCommand('/quit')?.name).toBe('exit')
+    expect(findSlashCommand('/custom')?.name).toBe('instructions')
   })
 
   it('suggests commands from partial input', () => {
@@ -29,6 +30,7 @@ describe('slash commands', () => {
   it('formats help from the command table', () => {
     expect(formatSlashCommandHelp()).toContain('/status')
     expect(formatSlashCommandHelp()).toContain('/model <name>')
+    expect(formatSlashCommandHelp()).toContain('/instructions')
     expect(formatSlashCommandHelp()).toContain('/exit')
   })
 })

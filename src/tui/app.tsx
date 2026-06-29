@@ -1,6 +1,7 @@
 import path from 'node:path'
 import { Box, Text, render, useApp, useInput, useStdout } from 'ink'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { listInstructionSources } from '../agent/instructions.js'
 import { AgentRunner } from '../agent/runner.js'
 import { AuthManager } from '../auth/manager.js'
 import { reasoningEffortSchema, type NekodexConfig } from '../config/schema.js'
@@ -24,7 +25,43 @@ const ANIMATION_FRAMES = ['-', '\\', '|', '/']
 const APPROVAL_DETAIL_ROWS = 5
 const MAX_TRANSCRIPT_ITEMS = 80
 const MIN_TRANSCRIPT_HEIGHT = 8
-const STATIC_LAYOUT_ROWS = 5
+const STATIC_LAYOUT_ROWS = 3
+const PROMPT_MARK = '\u203a'
+const BULLET_MARK = '\u2022'
+const CHECK_MARK = '\u2713'
+const CROSS_MARK = '\u2717'
+const DOT_MARK = '\u00b7'
+
+const MODEL_OPTIONS = [
+  {
+    value: 'gpt-5.5',
+    label: 'gpt-5.5',
+    description: 'Default Nekodex model for the ChatGPT Codex backend and Responses API.'
+  },
+  {
+    value: 'gpt-5.4',
+    label: 'gpt-5.4',
+    description: 'Balanced coding model when available on your account.'
+  },
+  {
+    value: 'gpt-5.4-mini',
+    label: 'gpt-5.4-mini',
+    description: 'Faster, cheaper model for small edits and quick questions.'
+  },
+  {
+    value: 'gpt-5.3-codex-spark',
+    label: 'gpt-5.3-codex-spark',
+    description: 'Compatibility option for older Codex-style workflows.'
+  }
+]
+
+const EFFORT_OPTIONS = [
+  { value: 'none', label: 'none', description: 'No extra reasoning budget.' },
+  { value: 'low', label: 'low', description: 'Fast responses for simple work.' },
+  { value: 'medium', label: 'medium', description: 'Default balance for coding tasks.' },
+  { value: 'high', label: 'high', description: 'More reasoning for larger changes.' },
+  { value: 'xhigh', label: 'xhigh', description: 'Maximum reasoning when the model supports it.' }
+]
 
 type TranscriptRole = 'assistant' | 'error' | 'status' | 'tool' | 'user'
 
@@ -38,6 +75,19 @@ interface PendingApproval {
   detail: string
   id: number
   request: ToolApprovalRequest
+}
+
+interface SelectionOption {
+  description: string
+  label: string
+  value: string
+}
+
+interface ActiveSelection {
+  id: 'effort' | 'model'
+  options: SelectionOption[]
+  selectedIndex: number
+  title: string
 }
 
 export interface TuiOptions {
@@ -63,12 +113,14 @@ function NekodexTui({ options }: { options: TuiOptions }) {
   const [status, setStatus] = useState('Ready')
   const [isRunning, setIsRunning] = useState(false)
   const [frameIndex, setFrameIndex] = useState(0)
+  const [instructionCount, setInstructionCount] = useState(0)
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null)
+  const [activeSelection, setActiveSelection] = useState<ActiveSelection | null>(null)
   const [transcript, setTranscript] = useState<TranscriptItem[]>([
     {
       id: 1,
       role: 'status',
-      text: 'Ready. Ask Nekodex to do anything.'
+      text: 'Nekodex is ready. Type /help for commands or ask for a code change.'
     }
   ])
   const nextIdRef = useRef(2)
@@ -120,7 +172,7 @@ function NekodexTui({ options }: { options: TuiOptions }) {
       setStatus(approved ? 'Approved' : 'Denied')
       appendTranscript(
         'tool',
-        `${approved ? '✔ You approved' : '✗ You denied'} ${pendingApproval.request.toolName}`
+        `${approved ? CHECK_MARK : CROSS_MARK} You ${approved ? 'approved' : 'denied'} ${pendingApproval.request.toolName}`
       )
     },
     [appendTranscript, pendingApproval]
@@ -130,6 +182,74 @@ function NekodexTui({ options }: { options: TuiOptions }) {
     setPrompt(nextPrompt)
     setCursorIndex(clampCursor(nextCursorIndex, nextPrompt))
   }, [])
+
+  const openModelSelection = useCallback(() => {
+    setActiveSelection({
+      id: 'model',
+      title: 'Select Model and Effort',
+      options: MODEL_OPTIONS.map((option) => ({
+        ...option,
+        label: option.value === activeModel ? `${option.label} (current)` : option.label
+      })),
+      selectedIndex: Math.max(
+        0,
+        MODEL_OPTIONS.findIndex((option) => option.value === activeModel)
+      )
+    })
+  }, [activeModel])
+
+  const openEffortSelection = useCallback(() => {
+    setActiveSelection({
+      id: 'effort',
+      title: 'Select Reasoning Effort',
+      options: EFFORT_OPTIONS.map((option) => ({
+        ...option,
+        label: option.value === runtimeConfig.reasoningEffort ? `${option.label} (current)` : option.label
+      })),
+      selectedIndex: Math.max(
+        0,
+        EFFORT_OPTIONS.findIndex((option) => option.value === runtimeConfig.reasoningEffort)
+      )
+    })
+  }, [runtimeConfig.reasoningEffort])
+
+  const applySelection = useCallback(async () => {
+    if (!activeSelection) {
+      return
+    }
+
+    const selectedOption = activeSelection.options[activeSelection.selectedIndex]
+    if (!selectedOption) {
+      return
+    }
+
+    if (activeSelection.id === 'model') {
+      const nextConfig = await options.configStore.patchConfig({ model: selectedOption.value })
+      setRuntimeConfig(nextConfig)
+      setModelOverride(selectedOption.value)
+      runnerRef.current = null
+      setStatus(`Model set to ${selectedOption.value}`)
+      appendTranscript('status', `Model set to ${selectedOption.value}. New requests will use it.`)
+    } else {
+      const parsedEffort = reasoningEffortSchema.safeParse(selectedOption.value)
+      if (!parsedEffort.success) {
+        appendTranscript('error', 'Invalid reasoning effort selection.')
+        return
+      }
+      const nextConfig = await options.configStore.patchConfig({
+        reasoningEffort: parsedEffort.data
+      })
+      setRuntimeConfig(nextConfig)
+      runnerRef.current = null
+      setStatus(`Reasoning effort set to ${parsedEffort.data}`)
+      appendTranscript(
+        'status',
+        `Reasoning effort set to ${parsedEffort.data}. New requests will use it.`
+      )
+    }
+
+    setActiveSelection(null)
+  }, [activeSelection, appendTranscript, options.configStore])
 
   if (!authManagerRef.current) {
     authManagerRef.current = new AuthManager(options.configStore)
@@ -170,6 +290,25 @@ function NekodexTui({ options }: { options: TuiOptions }) {
     return () => clearInterval(interval)
   }, [isRunning])
 
+  useEffect(() => {
+    let isMounted = true
+    void listInstructionSources(options.workspaceRoot)
+      .then((sources) => {
+        if (isMounted) {
+          setInstructionCount(sources.length)
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setInstructionCount(0)
+        }
+      })
+
+    return () => {
+      isMounted = false
+    }
+  }, [options.workspaceRoot])
+
   const runSlashCommand = useCallback(
     async (commandLine: string) => {
       const command = findSlashCommand(commandLine)
@@ -193,14 +332,7 @@ function NekodexTui({ options }: { options: TuiOptions }) {
 
       if (command?.name === 'model') {
         if (!commandArguments) {
-          appendTranscript(
-            'status',
-            [
-              `Current model: ${activeModel}`,
-              'Usage: /model <name>',
-              'Examples: /model gpt-5.5, /model gpt-5.4-mini'
-            ].join('\n')
-          )
+          openModelSelection()
           return
         }
 
@@ -216,13 +348,7 @@ function NekodexTui({ options }: { options: TuiOptions }) {
 
       if (command?.name === 'effort') {
         if (!commandArguments) {
-          appendTranscript(
-            'status',
-            [
-              `Current reasoning effort: ${runtimeConfig.reasoningEffort}`,
-              'Usage: /effort <none|low|medium|high|xhigh>'
-            ].join('\n')
-          )
+          openEffortSelection()
           return
         }
 
@@ -245,6 +371,13 @@ function NekodexTui({ options }: { options: TuiOptions }) {
         return
       }
 
+      if (command?.name === 'instructions') {
+        const instructionSources = await listInstructionSources(options.workspaceRoot)
+        setInstructionCount(instructionSources.length)
+        appendTranscript('status', formatInstructionSources(instructionSources, options.workspaceRoot))
+        return
+      }
+
       if (command?.name === 'status') {
         setStatus('Status')
         appendTranscript(
@@ -264,7 +397,7 @@ function NekodexTui({ options }: { options: TuiOptions }) {
 
       appendTranscript('error', `Unknown command: ${commandLine}. Try /help.`)
     },
-    [activeModel, appendTranscript, exit, options, runtimeConfig]
+    [activeModel, appendTranscript, exit, openEffortSelection, openModelSelection, options, runtimeConfig]
   )
 
   const submitPrompt = useCallback(() => {
@@ -320,6 +453,11 @@ function NekodexTui({ options }: { options: TuiOptions }) {
     const commandSuggestions = getSlashCommandSuggestions(prompt)
 
     if (key.ctrl && input === 'c') {
+      if (activeSelection) {
+        setActiveSelection(null)
+        setStatus('Ready')
+        return
+      }
       if (pendingApproval) {
         resolvePendingApproval(false)
         setStatus('Stopping')
@@ -334,6 +472,42 @@ function NekodexTui({ options }: { options: TuiOptions }) {
       exit()
       return
     }
+    if (activeSelection) {
+      if (key.upArrow) {
+        setActiveSelection((current) =>
+          current
+            ? { ...current, selectedIndex: Math.max(0, current.selectedIndex - 1) }
+            : current
+        )
+        return
+      }
+      if (key.downArrow) {
+        setActiveSelection((current) =>
+          current
+            ? {
+                ...current,
+                selectedIndex: Math.min(current.options.length - 1, current.selectedIndex + 1)
+              }
+            : current
+        )
+        return
+      }
+      if (key.return) {
+        void applySelection().catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : String(error)
+          appendTranscript('error', message)
+          setActiveSelection(null)
+          setStatus('Ready')
+        })
+        return
+      }
+      if (key.escape) {
+        setActiveSelection(null)
+        setStatus('Ready')
+        return
+      }
+      return
+    }
     if (pendingApproval) {
       if (key.return || input.toLowerCase() === 'y') {
         resolvePendingApproval(true)
@@ -343,6 +517,11 @@ function NekodexTui({ options }: { options: TuiOptions }) {
         resolvePendingApproval(false)
         return
       }
+      return
+    }
+    if (isRunning && key.escape) {
+      setStatus('Stopping')
+      abortControllerRef.current?.abort()
       return
     }
     if (commandSuggestions.length > 0 && key.upArrow) {
@@ -416,13 +595,23 @@ function NekodexTui({ options }: { options: TuiOptions }) {
   const approvalRows = pendingApproval
     ? getApprovalPanelRows(pendingApproval.detail, dimensions.columns)
     : 0
-  const suggestionRows = commandSuggestions.length > 0 && !pendingApproval
+  const selectionRows = activeSelection
+    ? getSelectionPanelRows(activeSelection, dimensions.columns)
+    : 0
+  const suggestionRows = commandSuggestions.length > 0 && !pendingApproval && !activeSelection
     ? commandSuggestions.length + 1
     : 0
   const activityRows = isRunning || status !== 'Ready' ? 1 : 0
+  const composerRows = pendingApproval || activeSelection ? 0 : 2
   const transcriptHeight = Math.max(
     MIN_TRANSCRIPT_HEIGHT,
-    dimensions.rows - STATIC_LAYOUT_ROWS - approvalRows - suggestionRows - activityRows
+    dimensions.rows -
+      STATIC_LAYOUT_ROWS -
+      approvalRows -
+      selectionRows -
+      suggestionRows -
+      activityRows -
+      composerRows
   )
   const visibleTranscript = useMemo(
     () => transcript.slice(-transcriptHeight),
@@ -442,22 +631,30 @@ function NekodexTui({ options }: { options: TuiOptions }) {
           <TranscriptLine key={item.id} item={item} width={dimensions.columns - 8} />
         ))}
       </Box>
-      {pendingApproval ? <ApprovalPanel approval={pendingApproval} width={dimensions.columns - 4} /> : null}
       <ActivityLine frame={frame} isRunning={isRunning} status={status} />
-      {!pendingApproval ? (
-        <CommandForeshadowing
-          selectedIndex={selectedCommandIndex}
-          suggestions={commandSuggestions}
-        />
+      {pendingApproval ? (
+        <ApprovalPanel approval={pendingApproval} width={dimensions.columns - 4} />
       ) : null}
-      <Composer
-        cursorIndex={cursorIndex}
-        isApprovalPending={Boolean(pendingApproval)}
-        prompt={prompt}
-      />
+      {activeSelection ? (
+        <SelectionPanel selection={activeSelection} width={dimensions.columns - 4} />
+      ) : null}
+      {!pendingApproval && !activeSelection ? (
+        <>
+          <Composer
+            cursorIndex={cursorIndex}
+            isApprovalPending={Boolean(pendingApproval)}
+            prompt={prompt}
+          />
+          <CommandForeshadowing
+            selectedIndex={selectedCommandIndex}
+            suggestions={commandSuggestions}
+          />
+        </>
+      ) : null}
       <Footer
         approvalMode={approvalMode}
         contextMode={contextMode}
+        instructionCount={instructionCount}
         isRunning={isRunning}
         model={activeModel}
         reasoningEffort={reasoningEffort}
@@ -540,11 +737,11 @@ function ActivityLine({
   }
 
   const label = isRunning ? `${frame} Working` : status
-  const hint = isRunning ? 'Ctrl+C to interrupt' : 'ready'
+  const hint = isRunning ? 'esc to interrupt' : 'ready'
 
   return (
     <Box marginTop={1}>
-      <Text color={isRunning ? 'yellow' : 'gray'}>• {label}</Text>
+      <Text color={isRunning ? 'yellow' : 'gray'}>{BULLET_MARK} {label}</Text>
       <Text color="gray"> ({hint})</Text>
     </Box>
   )
@@ -555,7 +752,7 @@ function CommandForeshadowing({
   suggestions
 }: {
   selectedIndex: number
-  suggestions: Array<{ description: string; name: string }>
+  suggestions: Array<{ description: string; name: string; usage?: string }>
 }) {
   if (suggestions.length === 0) {
     return null
@@ -566,13 +763,50 @@ function CommandForeshadowing({
       {suggestions.map((suggestion, index) => (
         <Box key={suggestion.name}>
           <Text color={index === selectedIndex ? 'cyan' : 'gray'}>
-            {index === selectedIndex ? '› ' : '  '}
-            {index + 1}. /{suggestion.name}
+            {index === selectedIndex ? `${PROMPT_MARK} ` : '  '}
+            {index + 1}. {suggestion.usage ?? `/${suggestion.name}`}
           </Text>
           <Text color="gray">  {suggestion.description}</Text>
         </Box>
       ))}
       <Text color="gray">  Tab complete  Up/Down select  Enter run</Text>
+    </Box>
+  )
+}
+
+function SelectionPanel({
+  selection,
+  width
+}: {
+  selection: ActiveSelection
+  width: number
+}) {
+  const descriptionWidth = Math.max(24, width - 32)
+
+  return (
+    <Box flexDirection="column" marginTop={1}>
+      <Text>  {selection.title}</Text>
+      <Text> </Text>
+      {selection.options.map((option, index) => {
+        const prefix = index === selection.selectedIndex ? `${PROMPT_MARK} ` : '  '
+        const label = `${index + 1}. ${option.label}`.padEnd(28, ' ')
+        const descriptionLines = wrapText(option.description, descriptionWidth)
+        return (
+          <Box key={option.value} flexDirection="column">
+            <Box>
+              <Text color={index === selection.selectedIndex ? 'cyan' : 'gray'}>{prefix}</Text>
+              <Text color={index === selection.selectedIndex ? 'white' : 'gray'}>{label}</Text>
+              <Text color="gray">{descriptionLines[0] ?? ''}</Text>
+            </Box>
+            {descriptionLines.slice(1).map((line, lineIndex) => (
+              <Box key={`${option.value}-${lineIndex}`}>
+                <Text color="gray">{' '.repeat(32)}{line}</Text>
+              </Box>
+            ))}
+          </Box>
+        )
+      })}
+      <Text color="gray">  Enter select  Esc cancel</Text>
     </Box>
   )
 }
@@ -594,7 +828,7 @@ function ApprovalPanel({ approval, width }: { approval: PendingApproval; width: 
           {line}
         </Text>
       ))}
-      <Text color="cyan">› 1. Yes, proceed (y)</Text>
+      <Text color="cyan">{PROMPT_MARK} 1. Yes, proceed (y)</Text>
       <Text color="gray">  2. No, tell Nekodex what to do differently (esc)</Text>
       <Text color="gray">  Press enter to confirm or esc to cancel</Text>
     </Box>
@@ -618,7 +852,7 @@ function Composer({
   return (
     <Box marginTop={1}>
       <Text color="cyan" bold>
-        {'› '}
+        {`${PROMPT_MARK} `}
       </Text>
       <Text>{beforeCursor}</Text>
       <Text backgroundColor="cyan" color="black">
@@ -633,6 +867,7 @@ function Composer({
 function Footer({
   approvalMode,
   contextMode,
+  instructionCount,
   isRunning,
   model,
   reasoningEffort,
@@ -642,6 +877,7 @@ function Footer({
 }: {
   approvalMode: string
   contextMode: string
+  instructionCount: number
   isRunning: boolean
   model: string
   reasoningEffort: string
@@ -649,16 +885,14 @@ function Footer({
   width: number
   workspaceLabel: string
 }) {
+  const modeHint = isRunning ? 'Esc to interrupt' : '/help for commands'
   const statusLine = truncateLine(
-    `${model} ${reasoningEffort} · ${workspaceLabel} · approval ${approvalMode} · sandbox ${sandboxMode} · context ${contextMode} · v${APP_VERSION}`,
+    `${model} ${reasoningEffort} ${DOT_MARK} Context ${contextMode} ${DOT_MARK} ${workspaceLabel} ${DOT_MARK} approval ${approvalMode} ${DOT_MARK} sandbox ${sandboxMode} ${DOT_MARK} instructions ${instructionCount} ${DOT_MARK} ${modeHint} ${DOT_MARK} v${APP_VERSION}`,
     width
   )
 
   return (
-    <Box flexDirection="column" marginTop={1}>
-      <Text color="gray">
-        {isRunning ? '  Ctrl+C interrupt · Esc clear · Tab complete' : '  Enter send · Esc clear · Ctrl+C quit · Tab complete'}
-      </Text>
+    <Box marginTop={1}>
       <Text color="gray">  {statusLine}</Text>
     </Box>
   )
@@ -670,18 +904,18 @@ function roleStyle(role: TranscriptRole): {
   label: string
 } {
   if (role === 'user') {
-    return { bodyColor: 'white', color: 'cyan', label: '›' }
+    return { bodyColor: 'white', color: 'cyan', label: PROMPT_MARK }
   }
   if (role === 'assistant') {
-    return { bodyColor: 'white', color: 'gray', label: '•' }
+    return { bodyColor: 'white', color: 'gray', label: BULLET_MARK }
   }
   if (role === 'error') {
-    return { bodyColor: 'red', color: 'red', label: '✗' }
+    return { bodyColor: 'red', color: 'red', label: CROSS_MARK }
   }
   if (role === 'tool') {
-    return { bodyColor: 'gray', color: 'yellow', label: '•' }
+    return { bodyColor: 'gray', color: 'yellow', label: BULLET_MARK }
   }
-  return { bodyColor: 'gray', color: 'gray', label: '•' }
+  return { bodyColor: 'gray', color: 'gray', label: BULLET_MARK }
 }
 
 function getTerminalDimensions(stdout: NodeJS.WriteStream): { columns: number; rows: number } {
@@ -725,6 +959,28 @@ function formatToolArguments(toolName: string, value: unknown): string {
   return trimLongText(JSON.stringify(value, null, 2))
 }
 
+function formatInstructionSources(
+  sources: Array<{ path: string; scope: 'env' | 'personal' | 'project' }>,
+  workspaceRoot: string
+): string {
+  if (sources.length === 0) {
+    return [
+      'No custom instruction files loaded.',
+      'Create AGENTS.md or .nekodex/instructions.md in this project,',
+      'or set NEKODEX_INSTRUCTIONS to one or more instruction files.'
+    ].join('\n')
+  }
+
+  return [
+    'Custom instructions loaded:',
+    ...sources.map((source) => {
+      const displayPath =
+        source.scope === 'project' ? path.relative(workspaceRoot, source.path) : source.path
+      return `- ${source.scope}: ${displayPath}`
+    })
+  ].join('\n')
+}
+
 function getApprovalTitle(request: ToolApprovalRequest): string {
   if (request.toolName === 'run_command') {
     return 'Would you like to run the following command?'
@@ -747,6 +1003,14 @@ function getApprovalPanelRows(detail: string, columns: number): number {
   const detailRows = wrapText(detail, Math.max(24, columns - 8)).slice(0, APPROVAL_DETAIL_ROWS)
     .length
   return detailRows + 5
+}
+
+function getSelectionPanelRows(selection: ActiveSelection, columns: number): number {
+  const descriptionWidth = Math.max(24, columns - 36)
+  return selection.options.reduce(
+    (rows, option) => rows + Math.max(1, wrapText(option.description, descriptionWidth).length),
+    4
+  )
 }
 
 function truncateLine(value: string, width: number): string {

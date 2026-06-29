@@ -85,19 +85,19 @@ program
 
 program
   .command('init')
-  .description('Create AGENT.md and SKILL.md starter files if they do not exist.')
+  .description('Create AGENTS.md and SKILL.md starter files if they do not exist.')
   .option('-C, --cwd <path>', 'workspace directory', process.cwd())
   .action(async (options: { cwd: string }) => {
     const workspaceRoot = path.resolve(options.cwd)
     await writeStarterFile(
-      path.join(workspaceRoot, 'AGENT.md'),
-      '# Nekodex Agent Guide\n\n- Inspect relevant files before editing.\n- Keep changes small and verified.\n- Prefer `pnpm typecheck`, `pnpm lint`, and `pnpm test` before release.\n'
+      path.join(workspaceRoot, 'AGENTS.md'),
+      '# Nekodex Project Instructions\n\n- Inspect relevant files before editing.\n- Keep changes small, readable, and verified.\n- Prefer existing project patterns over new abstractions.\n- Run the narrowest useful check before calling work done.\n'
     )
     await writeStarterFile(
       path.join(workspaceRoot, 'SKILL.md'),
       '# Nekodex Skill Guide\n\nUse this file for reusable project workflows, commands, and task-specific playbooks.\n'
     )
-    console.log('Initialized AGENT.md and SKILL.md.')
+    console.log('Initialized AGENTS.md and SKILL.md.')
   })
 
 program

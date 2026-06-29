@@ -21,6 +21,11 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     usage: '/effort <none|low|medium|high|xhigh>'
   },
   {
+    name: 'instructions',
+    aliases: ['custom'],
+    description: 'show project and personal instruction files'
+  },
+  {
     name: 'help',
     description: 'show slash commands'
   },
