@@ -4,14 +4,15 @@ import { promisify } from 'node:util'
 import { Box, Text, render, useApp, useInput, useStdout } from 'ink'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { listInstructionSources } from '../agent/instructions.js'
-import { AgentRunner } from '../agent/runner.js'
+import { AgentRunner, type AgentToolState } from '../agent/runner.js'
 import { AuthManager } from '../auth/manager.js'
 import { reasoningEffortSchema, type NekodexConfig } from '../config/schema.js'
 import type { ConfigStore } from '../config/store.js'
 import { APP_VERSION } from '../constants.js'
 import { MemoryStore } from '../memory/store.js'
-import { SessionStore, type PersistedTranscriptItem } from '../session/store.js'
+import { SessionStore, type PersistedSession, type PersistedTranscriptItem } from '../session/store.js'
 import { buildFileEditPreview } from '../tools/edit-preview.js'
+import { ToolRegistry } from '../tools/registry.js'
 import type { ToolApprovalRequest } from '../tools/types.js'
 import {
   findSlashCommand,
@@ -34,6 +35,7 @@ const BULLET_MARK = '\u2022'
 const CHECK_MARK = '\u2713'
 const CROSS_MARK = '\u2717'
 const DOT_MARK = '\u00b7'
+const LOCAL_TOOL_COUNT = ToolRegistry.withDefaultTools().schemas().length
 
 const MODEL_OPTIONS = [
   {
@@ -137,6 +139,7 @@ function NekodexTui({ options }: { options: TuiOptions }) {
   const [frameIndex, setFrameIndex] = useState(0)
   const [instructionCount, setInstructionCount] = useState(0)
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null)
+  const [activeToolState, setActiveToolState] = useState<AgentToolState | null>(null)
   const [activeSelection, setActiveSelection] = useState<ActiveSelection | null>(null)
   const [transcript, setTranscript] = useState<TranscriptItem[]>(() =>
     createInitialTranscript(options.initialTranscript)
@@ -176,6 +179,7 @@ function NekodexTui({ options }: { options: TuiOptions }) {
         })
         nextIdRef.current += 1
         setStatus(`Approve ${request.toolName}?`)
+        setActiveToolState({ status: 'approval', toolName: request.toolName })
         appendTranscript('tool', `Approval requested for ${request.toolName}\n${detail}`)
       }),
     [appendTranscript]
@@ -191,6 +195,10 @@ function NekodexTui({ options }: { options: TuiOptions }) {
       approvalResolverRef.current = null
       setPendingApproval(null)
       setStatus(approved ? 'Approved' : 'Denied')
+      setActiveToolState({
+        status: approved ? 'running' : 'denied',
+        toolName: pendingApproval.request.toolName
+      })
       appendTranscript(
         'tool',
         `${approved ? CHECK_MARK : CROSS_MARK} You ${approved ? 'approved' : 'denied'} ${pendingApproval.request.toolName}`
@@ -292,6 +300,7 @@ function NekodexTui({ options }: { options: TuiOptions }) {
       approvalMode: options.approvalMode,
       onAssistantText: (text) => appendTranscript('assistant', text),
       onToolApproval: requestToolApproval,
+      onToolState: setActiveToolState,
       onStatus: (text) => {
         setStatus(text)
         appendTranscript(text.startsWith('tool:') ? 'tool' : 'status', formatStatusText(text))
@@ -322,6 +331,21 @@ function NekodexTui({ options }: { options: TuiOptions }) {
 
     return () => clearInterval(interval)
   }, [isRunning])
+
+  useEffect(() => {
+    if (
+      !activeToolState ||
+      !['denied', 'done', 'failed'].includes(activeToolState.status)
+    ) {
+      return undefined
+    }
+
+    const timeout = setTimeout(() => {
+      setActiveToolState((current) => (current === activeToolState ? null : current))
+    }, 1600)
+
+    return () => clearTimeout(timeout)
+  }, [activeToolState])
 
   useEffect(() => {
     let isMounted = true
@@ -411,6 +435,24 @@ function NekodexTui({ options }: { options: TuiOptions }) {
         return
       }
 
+      if (command?.name === 'sessions') {
+        appendTranscript(
+          'status',
+          formatTuiSessionList(await (sessionStoreRef.current as SessionStore).list())
+        )
+        return
+      }
+
+      if (command?.name === 'mcp') {
+        appendTranscript('status', formatTuiMcpStatus(runtimeConfig))
+        return
+      }
+
+      if (command?.name === 'tools') {
+        appendTranscript('status', formatTuiToolStatus(runtimeConfig))
+        return
+      }
+
       if (command?.name === 'permissions') {
         appendTranscript(
           'status',
@@ -496,6 +538,7 @@ function NekodexTui({ options }: { options: TuiOptions }) {
       ?.run(commandPrompt, { signal: abortController.signal })
       .catch((error: unknown) => {
         if (abortController.signal.aborted) {
+          setActiveToolState(null)
           appendTranscript('status', 'Interrupted.')
           return
         }
@@ -686,6 +729,7 @@ function NekodexTui({ options }: { options: TuiOptions }) {
   const workspaceLabel = compactPath(options.workspaceRoot, dimensions.columns)
   const frame = ANIMATION_FRAMES[frameIndex % ANIMATION_FRAMES.length]
   const reasoningEffort = runtimeConfig.reasoningEffort
+  const startupSummary = buildStartupSummary(runtimeConfig, instructionCount)
 
   return (
     <Box flexDirection="column" paddingX={1}>
@@ -695,6 +739,7 @@ function NekodexTui({ options }: { options: TuiOptions }) {
             instructionCount={instructionCount}
             model={activeModel}
             sessionId={options.sessionId}
+            startupSummary={startupSummary}
             width={dimensions.columns - 4}
             workspaceLabel={workspaceLabel}
           />
@@ -703,7 +748,12 @@ function NekodexTui({ options }: { options: TuiOptions }) {
           <TranscriptLine key={item.id} item={item} width={dimensions.columns - 8} />
         ))}
       </Box>
-      <ActivityLine frame={frame} isRunning={isRunning} status={status} />
+      <ActivityLine
+        activeToolState={activeToolState}
+        frame={frame}
+        isRunning={isRunning}
+        status={status}
+      />
       {pendingApproval ? (
         <ApprovalPanel approval={pendingApproval} width={dimensions.columns - 4} />
       ) : null}
@@ -795,12 +845,14 @@ function SplashPanel({
   instructionCount,
   model,
   sessionId,
+  startupSummary,
   width,
   workspaceLabel
 }: {
   instructionCount: number
   model: string
   sessionId: string
+  startupSummary: string[]
   width: number
   workspaceLabel: string
 }) {
@@ -829,6 +881,10 @@ function SplashPanel({
       </Box>
       <Text> </Text>
       <Text color="gray">Tip: GPT-5.5 is Nekodex's default agentic coding model.</Text>
+      <Text color="gray">startup</Text>
+      {startupSummary.map((line) => (
+        <Text key={line} color="gray">{BULLET_MARK} {line}</Text>
+      ))}
       <Text color="gray">{BULLET_MARK} Run /status to view auth, model, and context usage.</Text>
       <Text color="gray">{PROMPT_MARK} Use /skills to list {skillsLine}.</Text>
     </Box>
@@ -836,27 +892,81 @@ function SplashPanel({
 }
 
 function ActivityLine({
+  activeToolState,
   frame,
   isRunning,
   status
 }: {
+  activeToolState: AgentToolState | null
   frame: string
   isRunning: boolean
   status: string
 }) {
-  if (!isRunning && status === 'Ready') {
+  if (!activeToolState && !isRunning && status === 'Ready') {
     return null
   }
 
-  const label = isRunning ? `${frame} Working` : status
-  const hint = isRunning ? 'esc to interrupt' : 'ready'
+  const label = activeToolState
+    ? formatToolStateLabel(activeToolState, frame)
+    : isRunning
+      ? `${frame} Working`
+      : status
+  const hint = activeToolState
+    ? formatToolStateHint(activeToolState)
+    : isRunning
+      ? 'esc to interrupt'
+      : 'ready'
 
   return (
     <Box marginTop={1}>
-      <Text color={isRunning ? 'yellow' : 'gray'}>{BULLET_MARK} {label}</Text>
+      <Text color={activeToolState ? toolStateColor(activeToolState) : isRunning ? 'yellow' : 'gray'}>
+        {BULLET_MARK} {label}
+      </Text>
       <Text color="gray"> ({hint})</Text>
     </Box>
   )
+}
+
+function formatToolStateLabel(state: AgentToolState, frame: string): string {
+  if (state.status === 'approval') {
+    return `${PROMPT_MARK} Tool ${state.toolName}`
+  }
+  if (state.status === 'running') {
+    return `${frame} Tool ${state.toolName}`
+  }
+  if (state.status === 'done') {
+    return `${CHECK_MARK} Tool ${state.toolName}`
+  }
+  if (state.status === 'denied') {
+    return `${CROSS_MARK} Tool ${state.toolName}`
+  }
+  return `${CROSS_MARK} Tool ${state.toolName}`
+}
+
+function formatToolStateHint(state: AgentToolState): string {
+  if (state.status === 'approval') {
+    return 'waiting for approval'
+  }
+  if (state.status === 'running') {
+    return 'running'
+  }
+  if (state.status === 'done') {
+    return 'done'
+  }
+  if (state.status === 'denied') {
+    return 'denied'
+  }
+  return state.detail ? `failed: ${truncateLine(state.detail, 42)}` : 'failed'
+}
+
+function toolStateColor(state: AgentToolState): 'gray' | 'green' | 'red' | 'yellow' {
+  if (state.status === 'done') {
+    return 'green'
+  }
+  if (state.status === 'denied' || state.status === 'failed') {
+    return 'red'
+  }
+  return state.status === 'approval' ? 'yellow' : 'gray'
 }
 
 function CommandForeshadowing({
@@ -1041,6 +1151,26 @@ function compactPath(value: string, columns: number): string {
   return `...${path.sep}${tail}`
 }
 
+function buildStartupSummary(config: NekodexConfig, instructionCount: number): string[] {
+  const hostedTools = config.openAiHostedTools.map((tool) => tool.type).filter(Boolean)
+  const mcpServers = config.mcpServers
+  const missingMcpAuth = mcpServers.filter(
+    (server) => server.authorizationEnvVar && !process.env[server.authorizationEnvVar]
+  ).length
+  const hostedSummary = hostedTools.length > 0 ? hostedTools.join(', ') : 'none'
+  const mcpSummary =
+    mcpServers.length === 0
+      ? 'none'
+      : `${mcpServers.length} server${mcpServers.length === 1 ? '' : 's'}${missingMcpAuth ? `, ${missingMcpAuth} auth env missing` : ''}`
+
+  return [
+    `tools: ${LOCAL_TOOL_COUNT} local, hosted ${hostedSummary}`,
+    `mcp: ${mcpSummary}`,
+    `sandbox: ${config.sandboxMode}/${config.sandboxBackend}`,
+    `instructions: ${instructionCount}`
+  ]
+}
+
 function formatToolArguments(toolName: string, value: unknown): string {
   const editPreview = buildFileEditPreview(toolName, value, { lineLimit: 8 })
   if (editPreview) {
@@ -1083,6 +1213,62 @@ function formatInstructionSources(
         source.scope === 'project' ? path.relative(workspaceRoot, source.path) : source.path
       return `- ${source.scope}: ${displayPath}`
     })
+  ].join('\n')
+}
+
+function formatTuiSessionList(sessions: PersistedSession[]): string {
+  if (sessions.length === 0) {
+    return 'No saved sessions.'
+  }
+
+  return [
+    'Saved sessions:',
+    ...sessions.slice(0, 12).map((session) => {
+      const title = session.title ?? '(untitled)'
+      const marker = `${session.id}  ${title}`
+      return `- ${marker}\n  ${compactPath(session.workspaceRoot, 80)}\n  resume: nekodex resume ${session.id}`
+    })
+  ].join('\n')
+}
+
+function formatTuiMcpStatus(config: NekodexConfig): string {
+  if (config.mcpServers.length === 0) {
+    return 'No MCP servers configured. Run `nekodex mcp` to add one.'
+  }
+
+  return [
+    'MCP servers:',
+    ...config.mcpServers.map((server) => {
+      const authStatus = server.authorizationEnvVar
+        ? process.env[server.authorizationEnvVar]
+          ? `${server.authorizationEnvVar}: set`
+          : `${server.authorizationEnvVar}: missing`
+        : 'no auth env'
+      const allowedTools = server.allowedTools?.length
+        ? server.allowedTools.join(', ')
+        : 'all tools'
+      return `- ${server.serverLabel}\n  target: ${formatTuiMcpTarget(server)}\n  auth: ${authStatus}\n  allowed: ${allowedTools}\n  approval: ${server.requireApproval ?? 'default'}`
+    })
+  ].join('\n')
+}
+
+function formatTuiMcpTarget(server: NekodexConfig['mcpServers'][number]): string {
+  if (server.serverUrl) {
+    return server.serverUrl
+  }
+  if (server.command) {
+    return [server.command, ...(server.args ?? [])].join(' ')
+  }
+  return 'not configured'
+}
+
+function formatTuiToolStatus(config: NekodexConfig): string {
+  const hostedTools = config.openAiHostedTools.map((tool) => tool.type).filter(Boolean)
+  return [
+    'Tools:',
+    `- local workspace tools: ${LOCAL_TOOL_COUNT} ready`,
+    `- hosted OpenAI tools: ${hostedTools.length ? hostedTools.join(', ') : 'none'}`,
+    `- MCP servers: ${config.mcpServers.length}`
   ].join('\n')
 }
 

@@ -34,11 +34,20 @@ export interface AgentRunnerOptions {
   approvalMode?: 'ask' | 'auto'
   onAssistantText?: (text: string) => void
   onStatus?: (text: string) => void
+  onToolState?: (state: AgentToolState) => void
   onToolApproval?: (request: ToolApprovalRequest) => Promise<boolean>
 }
 
 export interface AgentRunOptions {
   signal?: AbortSignal
+}
+
+export type AgentToolStatus = 'approval' | 'denied' | 'done' | 'failed' | 'running'
+
+export interface AgentToolState {
+  detail?: string
+  status: AgentToolStatus
+  toolName: string
 }
 
 export class AgentRunner {
@@ -127,6 +136,7 @@ export class AgentRunner {
       const outputs = []
       for (const functionCall of functionCalls) {
         this.writeStatus(`tool: ${functionCall.name}`)
+        this.writeToolState({ status: 'running', toolName: functionCall.name })
         const result = await this.toolRegistry.execute(functionCall.name, functionCall.arguments, {
           workspaceRoot: path.resolve(this.options.workspaceRoot),
           approvalMode: this.options.approvalMode ?? this.options.config.approvalMode,
@@ -136,6 +146,11 @@ export class AgentRunner {
           openAiToken: auth.token,
           openAiBaseUrl: this.options.config.openaiBaseUrl,
           requestApproval: this.options.onToolApproval
+        })
+        this.writeToolState({
+          status: result.ok ? 'done' : toolFailureStatus(result.error),
+          toolName: functionCall.name,
+          detail: result.ok ? undefined : result.error
         })
         const editPreview = result.ok
           ? buildFileEditPreview(functionCall.name, functionCall.arguments)
@@ -201,6 +216,10 @@ export class AgentRunner {
       return
     }
     console.error(text)
+  }
+
+  private readonly writeToolState = (state: AgentToolState): void => {
+    this.options.onToolState?.(state)
   }
 }
 
@@ -286,4 +305,8 @@ function isOutputMessage(item: unknown): item is ResponseOutputMessage {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
+}
+
+function toolFailureStatus(error: string | undefined): AgentToolStatus {
+  return error?.startsWith('User denied tool call:') ? 'denied' : 'failed'
 }

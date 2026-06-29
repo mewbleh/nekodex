@@ -45,6 +45,32 @@ describe('SessionStore', () => {
     })
   })
 
+  it('lists, renames, and removes sessions', async () => {
+    const firstWorkspaceRoot = path.join(homeDir, 'workspace-one')
+    const secondWorkspaceRoot = path.join(homeDir, 'workspace-two')
+    const firstId = await sessionStore.save(firstWorkspaceRoot, { conversationItems: [] })
+    const secondId = await sessionStore.save(secondWorkspaceRoot, { conversationItems: [] })
+
+    await expect(sessionStore.rename(firstId, 'First project')).resolves.toBe(true)
+    await expect(sessionStore.rename('missing', 'Missing')).resolves.toBe(false)
+
+    const sessions = await sessionStore.list()
+    expect(sessions.map((session) => session.id).sort()).toEqual([firstId, secondId].sort())
+    expect((await sessionStore.loadById(firstId))?.title).toBe('First project')
+
+    await expect(sessionStore.remove(secondId)).resolves.toBe(true)
+    await expect(sessionStore.remove('missing')).resolves.toBe(false)
+    await expect(sessionStore.loadById(secondId)).resolves.toBeNull()
+  })
+
+  it('clears every saved session', async () => {
+    await sessionStore.save(path.join(homeDir, 'workspace-one'), { conversationItems: [] })
+    await sessionStore.save(path.join(homeDir, 'workspace-two'), { conversationItems: [] })
+
+    await expect(sessionStore.clearAll()).resolves.toBe(2)
+    await expect(sessionStore.list()).resolves.toEqual([])
+  })
+
   it('ensures a workspace has a session id', async () => {
     const workspaceRoot = path.join(homeDir, 'workspace')
 

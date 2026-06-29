@@ -9,6 +9,7 @@ import { AuthManager, maskSecret } from './auth/manager.js'
 import { ConfigStore } from './config/store.js'
 import type {
   ApprovalMode,
+  McpServerConfig,
   NekodexConfig,
   ReasoningEffort,
   SandboxBackend,
@@ -18,7 +19,7 @@ import { APP_VERSION, DEFAULT_AUTH_ISSUER, OAUTH_CLIENT_ID } from './constants.j
 import { AgentRunner } from './agent/runner.js'
 import { NekodexError } from './errors.js'
 import { MemoryStore } from './memory/store.js'
-import { SessionStore, transcriptFromSession } from './session/store.js'
+import { SessionStore, type PersistedSession, transcriptFromSession } from './session/store.js'
 import { startTui } from './tui/app.js'
 import { startCommandHub } from './tui/command-hub.js'
 import { serveMcp } from './mcp/server.js'
@@ -125,6 +126,71 @@ program
       model: options.model,
       approvalMode: options.yes ? 'auto' : config.approvalMode
     })
+  })
+
+const sessions = program
+  .command('sessions')
+  .alias('session')
+  .description('Manage saved Nekodex sessions.')
+  .action(async () => {
+    await startCommandHub({ group: 'sessions' })
+  })
+
+sessions
+  .command('list')
+  .description('List saved sessions.')
+  .action(async () => {
+    const sessionStore = new SessionStore(new ConfigStore())
+    console.log(formatSessionList(await sessionStore.list()))
+  })
+
+sessions
+  .command('show')
+  .description('Show one saved session.')
+  .argument('<id>', 'session id')
+  .action(async (id: string) => {
+    const session = await new SessionStore(new ConfigStore()).loadById(id)
+    if (!session) {
+      throw new Error(`Session not found: ${id}`)
+    }
+    console.log(formatSessionDetail(session))
+  })
+
+sessions
+  .command('rename')
+  .description('Rename a saved session.')
+  .argument('<id>', 'session id')
+  .argument('<title...>', 'new session title')
+  .action(async (id: string, titleParts: string[]) => {
+    const renamed = await new SessionStore(new ConfigStore()).rename(id, titleParts.join(' '))
+    console.log(renamed ? 'Renamed session.' : 'Session not found.')
+  })
+
+sessions
+  .command('remove')
+  .alias('delete')
+  .description('Delete a saved session.')
+  .argument('<id>', 'session id')
+  .action(async (id: string) => {
+    const removed = await new SessionStore(new ConfigStore()).remove(id)
+    console.log(removed ? 'Deleted session.' : 'Session not found.')
+  })
+
+sessions
+  .command('clear-current')
+  .description('Delete the session for a workspace.')
+  .option('-C, --cwd <path>', 'workspace directory', process.cwd())
+  .action(async (options: { cwd: string }) => {
+    const removed = await new SessionStore(new ConfigStore()).clear(path.resolve(options.cwd))
+    console.log(removed ? 'Deleted current workspace session.' : 'No session for this workspace.')
+  })
+
+sessions
+  .command('clear-all')
+  .description('Delete all saved sessions.')
+  .action(async () => {
+    const count = await new SessionStore(new ConfigStore()).clearAll()
+    console.log(`Deleted ${count} session${count === 1 ? '' : 's'}.`)
   })
 
 program
@@ -384,6 +450,14 @@ mcp
   })
 
 mcp
+  .command('status')
+  .description('Show MCP server readiness.')
+  .action(async () => {
+    const current = await new ConfigStore().loadConfig()
+    console.log(formatMcpStatus(current.mcpServers))
+  })
+
+mcp
   .command('add')
   .description('Add a remote MCP server for OpenAI Responses.')
   .argument('<label>', 'server label')
@@ -414,6 +488,110 @@ mcp
       console.log(`Added MCP server: ${label}`)
     }
   )
+
+mcp
+  .command('remove')
+  .alias('delete')
+  .description('Remove one remote MCP server by label.')
+  .argument('<label>', 'server label')
+  .action(async (label: string) => {
+    const removed = await removeMcpServer(new ConfigStore(), label)
+    console.log(removed ? `Removed MCP server: ${label}` : `MCP server not found: ${label}`)
+  })
+
+mcp
+  .command('rename')
+  .description('Rename one remote MCP server label.')
+  .argument('<label>', 'current server label')
+  .argument('<new-label>', 'new server label')
+  .action(async (label: string, newLabel: string) => {
+    const renamed = await updateMcpServer(new ConfigStore(), label, (server) => ({
+      ...server,
+      serverLabel: newLabel
+    }))
+    console.log(renamed ? `Renamed MCP server to: ${newLabel}` : `MCP server not found: ${label}`)
+  })
+
+mcp
+  .command('set-url')
+  .description('Change one remote MCP server URL.')
+  .argument('<label>', 'server label')
+  .argument('<url>', 'server URL')
+  .action(async (label: string, url: string) => {
+    const updated = await updateMcpServer(new ConfigStore(), label, (server) => ({
+      ...server,
+      serverUrl: url
+    }))
+    console.log(updated ? `Updated MCP server URL: ${label}` : `MCP server not found: ${label}`)
+  })
+
+mcp
+  .command('set-auth')
+  .description('Set the bearer-token environment variable for one MCP server.')
+  .argument('<label>', 'server label')
+  .argument('<env-var>', 'environment variable name')
+  .action(async (label: string, envVar: string) => {
+    const updated = await updateMcpServer(new ConfigStore(), label, (server) => ({
+      ...server,
+      authorizationEnvVar: envVar
+    }))
+    console.log(updated ? `Updated MCP auth env: ${label}` : `MCP server not found: ${label}`)
+  })
+
+mcp
+  .command('clear-auth')
+  .description('Remove MCP auth env configuration for one server.')
+  .argument('<label>', 'server label')
+  .action(async (label: string) => {
+    const updated = await updateMcpServer(new ConfigStore(), label, (server) => ({
+      ...server,
+      authorizationEnvVar: undefined
+    }))
+    console.log(updated ? `Cleared MCP auth env: ${label}` : `MCP server not found: ${label}`)
+  })
+
+mcp
+  .command('allow-tool')
+  .description('Allow one remote MCP tool for a server.')
+  .argument('<label>', 'server label')
+  .argument('<tool>', 'remote MCP tool name')
+  .action(async (label: string, tool: string) => {
+    const updated = await updateMcpServer(new ConfigStore(), label, (server) => ({
+      ...server,
+      allowedTools: uniqueStrings([...(server.allowedTools ?? []), tool])
+    }))
+    console.log(updated ? `Allowed MCP tool ${tool} on ${label}.` : `MCP server not found: ${label}`)
+  })
+
+mcp
+  .command('disallow-tool')
+  .description('Remove one remote MCP tool from a server allow-list.')
+  .argument('<label>', 'server label')
+  .argument('<tool>', 'remote MCP tool name')
+  .action(async (label: string, tool: string) => {
+    const updated = await updateMcpServer(new ConfigStore(), label, (server) => {
+      const allowedTools = (server.allowedTools ?? []).filter((item) => item !== tool)
+      return {
+        ...server,
+        allowedTools: allowedTools.length > 0 ? allowedTools : undefined
+      }
+    })
+    console.log(updated ? `Removed MCP tool ${tool} from ${label}.` : `MCP server not found: ${label}`)
+  })
+
+mcp
+  .command('set-approval')
+  .description('Set MCP server approval mode: always, never, or default.')
+  .argument('<label>', 'server label')
+  .argument('<mode>', 'always, never, or default')
+  .action(async (label: string, mode: string) => {
+    const requireApproval = parseMcpApprovalMode(mode)
+    const updated = await updateMcpServer(new ConfigStore(), label, (server) => ({
+      ...server,
+      requireApproval
+    }))
+    console.log(updated ? `Updated MCP approval: ${label}` : `MCP server not found: ${label}`)
+  })
 
 mcp
   .command('clear')
@@ -498,6 +676,134 @@ async function runChat(prompt: string, options: RootOptions): Promise<void> {
   }
 
   await runInteractiveChat(runner)
+}
+
+function formatSessionList(sessions: PersistedSession[]): string {
+  if (sessions.length === 0) {
+    return 'No saved sessions.'
+  }
+
+  return sessions
+    .map((session) => {
+      const title = session.title ?? '(untitled)'
+      const itemCount = session.conversationItems.length
+      return [
+        session.id,
+        title,
+        compactWorkspacePath(session.workspaceRoot),
+        `${itemCount} item${itemCount === 1 ? '' : 's'}`,
+        session.updatedAt
+      ].join('\t')
+    })
+    .join('\n')
+}
+
+function formatSessionDetail(session: PersistedSession): string {
+  return [
+    `id: ${session.id}`,
+    `title: ${session.title ?? '(untitled)'}`,
+    `workspace: ${session.workspaceRoot}`,
+    `updated: ${session.updatedAt}`,
+    `conversation items: ${session.conversationItems.length}`,
+    `visible transcript items: ${session.uiTranscript?.length ?? 0}`,
+    '',
+    `resume: nekodex resume ${session.id}`
+  ].join('\n')
+}
+
+function compactWorkspacePath(workspaceRoot: string): string {
+  const homeDir = process.env.HOME || process.env.USERPROFILE
+  if (!homeDir) {
+    return workspaceRoot
+  }
+  const relativePath = path.relative(homeDir, workspaceRoot)
+  if (!relativePath || relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+    return workspaceRoot
+  }
+  return path.join('~', relativePath)
+}
+
+function formatMcpStatus(servers: McpServerConfig[]): string {
+  if (servers.length === 0) {
+    return 'No MCP servers configured.'
+  }
+
+  return servers
+    .map((server) => {
+      const authStatus = server.authorizationEnvVar
+        ? process.env[server.authorizationEnvVar]
+          ? `${server.authorizationEnvVar}: set`
+          : `${server.authorizationEnvVar}: missing`
+        : 'no auth env'
+      const allowedTools = server.allowedTools?.length
+        ? server.allowedTools.join(', ')
+        : 'all tools'
+      return [
+        `${server.serverLabel}`,
+        `target: ${formatMcpTarget(server)}`,
+        `auth: ${authStatus}`,
+        `allowed: ${allowedTools}`,
+        `approval: ${server.requireApproval ?? 'default'}`
+      ].join('\n')
+    })
+    .join('\n\n')
+}
+
+function formatMcpTarget(server: McpServerConfig): string {
+  if (server.serverUrl) {
+    return server.serverUrl
+  }
+  if (server.command) {
+    return [server.command, ...(server.args ?? [])].join(' ')
+  }
+  return 'not configured'
+}
+
+async function updateMcpServer(
+  store: ConfigStore,
+  label: string,
+  update: (server: McpServerConfig) => McpServerConfig
+): Promise<boolean> {
+  const current = await store.loadConfig()
+  let didUpdate = false
+  const mcpServers = current.mcpServers.map((server) => {
+    if (server.serverLabel !== label) {
+      return server
+    }
+    didUpdate = true
+    return update(server)
+  })
+
+  if (!didUpdate) {
+    return false
+  }
+
+  await store.patchConfig({ mcpServers })
+  return true
+}
+
+async function removeMcpServer(store: ConfigStore, label: string): Promise<boolean> {
+  const current = await store.loadConfig()
+  const mcpServers = current.mcpServers.filter((server) => server.serverLabel !== label)
+  if (mcpServers.length === current.mcpServers.length) {
+    return false
+  }
+  await store.patchConfig({ mcpServers })
+  return true
+}
+
+function parseMcpApprovalMode(value: string): 'always' | 'never' | undefined {
+  if (value === 'default') {
+    return undefined
+  }
+  if (value === 'always' || value === 'never') {
+    return value
+  }
+  throw new Error('MCP approval mode must be always, never, or default.')
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))]
 }
 
 function resolveRuntimeConfig(

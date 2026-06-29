@@ -26,6 +26,18 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     description: 'show project, personal, and skill instruction files'
   },
   {
+    name: 'sessions',
+    description: 'show saved resumable sessions'
+  },
+  {
+    name: 'mcp',
+    description: 'show MCP server readiness'
+  },
+  {
+    name: 'tools',
+    description: 'show local and hosted tool readiness'
+  },
+  {
     name: 'permissions',
     description: 'show approval and sandbox settings'
   },

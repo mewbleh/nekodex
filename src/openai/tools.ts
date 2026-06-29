@@ -9,7 +9,7 @@ const MCP_TOOL_TYPE = 'mcp'
 export function buildConfiguredOpenAiTools(config: NekodexConfig): ResponseToolSchema[] {
   return [
     ...config.openAiHostedTools.map(normalizeHostedTool),
-    ...config.mcpServers.map(normalizeMcpTool)
+    ...config.mcpServers.filter(isRemoteMcpServer).map(normalizeMcpTool)
   ]
 }
 
@@ -39,7 +39,7 @@ function normalizeHostedTool(tool: OpenAiHostedToolConfig): ResponseToolSchema {
   return { ...tool }
 }
 
-function normalizeMcpTool(server: McpServerConfig): ResponseToolSchema {
+function normalizeMcpTool(server: McpServerConfig & { serverUrl: string }): ResponseToolSchema {
   // ref: https://platform.openai.com/docs/guides/tools-remote-mcp
   const authorization = server.authorizationEnvVar
     ? process.env[server.authorizationEnvVar]
@@ -54,4 +54,8 @@ function normalizeMcpTool(server: McpServerConfig): ResponseToolSchema {
     ...(server.allowedTools ? { allowed_tools: server.allowedTools } : {}),
     ...(server.requireApproval ? { require_approval: server.requireApproval } : {})
   }
+}
+
+function isRemoteMcpServer(server: McpServerConfig): server is McpServerConfig & { serverUrl: string } {
+  return Boolean(server.serverUrl)
 }

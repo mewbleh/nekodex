@@ -1,7 +1,7 @@
 import { Box, Text, render, useApp, useInput } from 'ink'
 import { useMemo, useState } from 'react'
 import { AuthManager, maskSecret } from '../auth/manager.js'
-import type { ApprovalMode, ReasoningEffort, SandboxMode } from '../config/schema.js'
+import type { ApprovalMode, McpServerConfig, ReasoningEffort, SandboxMode } from '../config/schema.js'
 import { ConfigStore } from '../config/store.js'
 import {
   formatAuthStatus,
@@ -19,6 +19,7 @@ import {
   OAUTH_CLIENT_ID
 } from '../constants.js'
 import { MemoryStore } from '../memory/store.js'
+import { SessionStore, type PersistedSession } from '../session/store.js'
 
 const REQUIRED_INPUT_MESSAGE = 'This field is required.'
 const VALID_APPROVAL_MODES = new Set(['ask', 'auto'])
@@ -26,7 +27,7 @@ const VALID_REASONING_EFFORTS = new Set(['none', 'low', 'medium', 'high', 'xhigh
 const VALID_SANDBOX_MODES = new Set(['read-only', 'workspace-write', 'danger-full-access'])
 const VALID_MCP_APPROVAL_MODES = new Set(['always', 'never'])
 
-export type CommandHubGroup = 'auth' | 'config' | 'mcp' | 'memory' | 'tools'
+export type CommandHubGroup = 'auth' | 'config' | 'mcp' | 'memory' | 'sessions' | 'tools'
 
 export interface CommandHubOptions {
   group: CommandHubGroup
@@ -287,6 +288,9 @@ function buildCommandHubActions(group: CommandHubGroup, store: ConfigStore): Com
   if (group === 'tools') {
     return buildToolsActions(store)
   }
+  if (group === 'sessions') {
+    return buildSessionActions(store)
+  }
   return buildMcpActions(store)
 }
 
@@ -521,6 +525,66 @@ function buildMemoryActions(store: ConfigStore): CommandHubAction[] {
   ]
 }
 
+function buildSessionActions(store: ConfigStore): CommandHubAction[] {
+  const sessionStore = new SessionStore(store)
+  return [
+    {
+      id: 'list',
+      label: 'List sessions',
+      description: 'show saved resumable sessions',
+      run: async () => formatSessionList(await sessionStore.list())
+    },
+    {
+      id: 'show',
+      label: 'Show session',
+      description: 'inspect one session by id',
+      prompts: [{ label: 'Session id', name: 'id', required: true }],
+      run: async ({ id }) => {
+        const session = await sessionStore.loadById(id)
+        return session ? formatSessionDetail(session) : 'Session not found.'
+      }
+    },
+    {
+      id: 'rename',
+      label: 'Rename session',
+      description: 'set a friendly title',
+      prompts: [
+        { label: 'Session id', name: 'id', required: true },
+        { label: 'New title', name: 'title', required: true }
+      ],
+      run: async ({ id, title }) =>
+        (await sessionStore.rename(id, title)) ? 'Renamed session.' : 'Session not found.'
+    },
+    {
+      id: 'remove',
+      label: 'Delete session',
+      description: 'remove one saved session by id',
+      prompts: [{ label: 'Session id', name: 'id', required: true }],
+      run: async ({ id }) =>
+        (await sessionStore.remove(id)) ? 'Deleted session.' : 'Session not found.'
+    },
+    {
+      id: 'clear-current',
+      label: 'Delete current workspace',
+      description: 'remove the session for this directory',
+      run: async () =>
+        (await sessionStore.clear(process.cwd()))
+          ? 'Deleted current workspace session.'
+          : 'No session for this workspace.'
+    },
+    {
+      id: 'clear-all',
+      label: 'Delete all sessions',
+      description: 'remove every saved session',
+      run: async () => {
+        const count = await sessionStore.clearAll()
+        return `Deleted ${count} session${count === 1 ? '' : 's'}.`
+      }
+    },
+    exitAction()
+  ]
+}
+
 function buildToolsActions(store: ConfigStore): CommandHubAction[] {
   return [
     {
@@ -564,6 +628,33 @@ function buildToolsActions(store: ConfigStore): CommandHubAction[] {
   ]
 }
 
+function formatSessionList(sessions: PersistedSession[]): string {
+  if (sessions.length === 0) {
+    return 'No saved sessions.'
+  }
+
+  return sessions
+    .map((session) => {
+      const title = session.title ?? '(untitled)'
+      const itemCount = session.conversationItems.length
+      return `${session.id}\t${title}\t${session.workspaceRoot}\t${itemCount} item${itemCount === 1 ? '' : 's'}\t${session.updatedAt}`
+    })
+    .join('\n')
+}
+
+function formatSessionDetail(session: PersistedSession): string {
+  return [
+    `id: ${session.id}`,
+    `title: ${session.title ?? '(untitled)'}`,
+    `workspace: ${session.workspaceRoot}`,
+    `updated: ${session.updatedAt}`,
+    `conversation items: ${session.conversationItems.length}`,
+    `visible transcript items: ${session.uiTranscript?.length ?? 0}`,
+    '',
+    `resume: nekodex resume ${session.id}`
+  ].join('\n')
+}
+
 function buildMcpActions(store: ConfigStore): CommandHubAction[] {
   return [
     {
@@ -571,6 +662,12 @@ function buildMcpActions(store: ConfigStore): CommandHubAction[] {
       label: 'List MCP servers',
       description: 'show remote MCP config',
       run: async () => formatJson((await store.loadConfig()).mcpServers)
+    },
+    {
+      id: 'status',
+      label: 'MCP status',
+      description: 'show auth env and allow-list readiness',
+      run: async () => formatMcpStatus((await store.loadConfig()).mcpServers)
     },
     {
       id: 'add',
@@ -602,6 +699,128 @@ function buildMcpActions(store: ConfigStore): CommandHubAction[] {
       }
     },
     {
+      id: 'rename',
+      label: 'Rename MCP server',
+      description: 'change a server label',
+      prompts: [
+        { label: 'Current label', name: 'label', required: true },
+        { label: 'New label', name: 'newLabel', required: true }
+      ],
+      run: async ({ label, newLabel }) =>
+        (await updateMcpServer(store, label, (server) => ({
+          ...server,
+          serverLabel: newLabel
+        })))
+          ? `Renamed MCP server to: ${newLabel}`
+          : `MCP server not found: ${label}`
+    },
+    {
+      id: 'set-url',
+      label: 'Set MCP URL',
+      description: 'change a server URL',
+      prompts: [
+        { label: 'Server label', name: 'label', required: true },
+        { label: 'Server URL', name: 'url', required: true }
+      ],
+      run: async ({ label, url }) =>
+        (await updateMcpServer(store, label, (server) => ({
+          ...server,
+          serverUrl: url
+        })))
+          ? `Updated MCP server URL: ${label}`
+          : `MCP server not found: ${label}`
+    },
+    {
+      id: 'set-auth',
+      label: 'Set MCP auth env',
+      description: 'set bearer token env var',
+      prompts: [
+        { label: 'Server label', name: 'label', required: true },
+        { label: 'Auth env var', name: 'authEnv', required: true }
+      ],
+      run: async ({ authEnv, label }) =>
+        (await updateMcpServer(store, label, (server) => ({
+          ...server,
+          authorizationEnvVar: authEnv
+        })))
+          ? `Updated MCP auth env: ${label}`
+          : `MCP server not found: ${label}`
+    },
+    {
+      id: 'clear-auth',
+      label: 'Clear MCP auth env',
+      description: 'remove bearer token env var',
+      prompts: [{ label: 'Server label', name: 'label', required: true }],
+      run: async ({ label }) =>
+        (await updateMcpServer(store, label, (server) => ({
+          ...server,
+          authorizationEnvVar: undefined
+        })))
+          ? `Cleared MCP auth env: ${label}`
+          : `MCP server not found: ${label}`
+    },
+    {
+      id: 'allow-tool',
+      label: 'Allow MCP tool',
+      description: 'add one tool to allow-list',
+      prompts: [
+        { label: 'Server label', name: 'label', required: true },
+        { label: 'Tool name', name: 'tool', required: true }
+      ],
+      run: async ({ label, tool }) =>
+        (await updateMcpServer(store, label, (server) => ({
+          ...server,
+          allowedTools: uniqueStrings([...(server.allowedTools ?? []), tool])
+        })))
+          ? `Allowed MCP tool ${tool} on ${label}.`
+          : `MCP server not found: ${label}`
+    },
+    {
+      id: 'disallow-tool',
+      label: 'Disallow MCP tool',
+      description: 'remove one allow-listed tool',
+      prompts: [
+        { label: 'Server label', name: 'label', required: true },
+        { label: 'Tool name', name: 'tool', required: true }
+      ],
+      run: async ({ label, tool }) =>
+        (await updateMcpServer(store, label, (server) => {
+          const allowedTools = (server.allowedTools ?? []).filter((item) => item !== tool)
+          return {
+            ...server,
+            allowedTools: allowedTools.length > 0 ? allowedTools : undefined
+          }
+        }))
+          ? `Removed MCP tool ${tool} from ${label}.`
+          : `MCP server not found: ${label}`
+    },
+    {
+      id: 'set-approval',
+      label: 'Set MCP approval',
+      description: 'always, never, or default',
+      prompts: [
+        { label: 'Server label', name: 'label', required: true },
+        { label: 'Approval (always/never/default)', name: 'approval', required: true }
+      ],
+      run: async ({ approval, label }) =>
+        (await updateMcpServer(store, label, (server) => ({
+          ...server,
+          requireApproval: parseMcpApprovalWithDefault(approval)
+        })))
+          ? `Updated MCP approval: ${label}`
+          : `MCP server not found: ${label}`
+    },
+    {
+      id: 'remove',
+      label: 'Remove MCP server',
+      description: 'delete one server by label',
+      prompts: [{ label: 'Server label', name: 'label', required: true }],
+      run: async ({ label }) =>
+        (await removeMcpServer(store, label))
+          ? `Removed MCP server: ${label}`
+          : `MCP server not found: ${label}`
+    },
+    {
       id: 'clear',
       label: 'Clear MCP servers',
       description: 'remove remote MCP config',
@@ -612,6 +831,75 @@ function buildMcpActions(store: ConfigStore): CommandHubAction[] {
     },
     exitAction()
   ]
+}
+
+function formatMcpStatus(servers: McpServerConfig[]): string {
+  if (servers.length === 0) {
+    return 'No MCP servers configured.'
+  }
+
+  return servers
+    .map((server) => {
+      const authStatus = server.authorizationEnvVar
+        ? process.env[server.authorizationEnvVar]
+          ? `${server.authorizationEnvVar}: set`
+          : `${server.authorizationEnvVar}: missing`
+        : 'no auth env'
+      const allowedTools = server.allowedTools?.length
+        ? server.allowedTools.join(', ')
+        : 'all tools'
+      return [
+        `${server.serverLabel}`,
+        `target: ${formatMcpTarget(server)}`,
+        `auth: ${authStatus}`,
+        `allowed: ${allowedTools}`,
+        `approval: ${server.requireApproval ?? 'default'}`
+      ].join('\n')
+    })
+    .join('\n\n')
+}
+
+function formatMcpTarget(server: McpServerConfig): string {
+  if (server.serverUrl) {
+    return server.serverUrl
+  }
+  if (server.command) {
+    return [server.command, ...(server.args ?? [])].join(' ')
+  }
+  return 'not configured'
+}
+
+async function updateMcpServer(
+  store: ConfigStore,
+  label: string,
+  update: (server: McpServerConfig) => McpServerConfig
+): Promise<boolean> {
+  const current = await store.loadConfig()
+  let didUpdate = false
+  const mcpServers = current.mcpServers.map((server) => {
+    if (server.serverLabel !== label) {
+      return server
+    }
+    didUpdate = true
+    return update(server)
+  })
+
+  if (!didUpdate) {
+    return false
+  }
+
+  await store.patchConfig({ mcpServers })
+  return true
+}
+
+async function removeMcpServer(store: ConfigStore, label: string): Promise<boolean> {
+  const current = await store.loadConfig()
+  const mcpServers = current.mcpServers.filter((server) => server.serverLabel !== label)
+  if (mcpServers.length === current.mcpServers.length) {
+    return false
+  }
+  await store.patchConfig({ mcpServers })
+  return true
 }
 
 function exitAction(): CommandHubAction {
@@ -632,6 +920,13 @@ function parseMcpApproval(value: string | undefined): 'always' | 'never' | undef
   return value as 'always' | 'never'
 }
 
+function parseMcpApprovalWithDefault(value: string | undefined): 'always' | 'never' | undefined {
+  if (value === 'default') {
+    return undefined
+  }
+  return parseMcpApproval(value)
+}
+
 function parseReasoningEffort(value: string | undefined, fallback: ReasoningEffort): ReasoningEffort {
   if (!value) {
     return fallback
@@ -644,6 +939,10 @@ function parseReasoningEffort(value: string | undefined, fallback: ReasoningEffo
 
 function maskInput(value: string): string {
   return value ? '*'.repeat(Math.min(value.length, 32)) : ''
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))]
 }
 
 function printCommandHubFallback(options: CommandHubOptions): void {

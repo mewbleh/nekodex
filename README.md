@@ -279,6 +279,10 @@ nekodex mcp serve -C .
 
 ## Config
 
+Nekodex stores local config in `config.toml` inside the Nekodex config
+directory. Existing `config.json` files are still readable as a fallback, but
+new writes go to TOML.
+
 Inspect and edit local config:
 
 ```bash
@@ -288,6 +292,38 @@ nekodex config set sandboxMode workspace-write
 nekodex config set sandboxBackend auto
 nekodex config set contextWindow.autoCompact true
 nekodex config set contextWindow.compactThresholdTokens 200000
+```
+
+Example `config.toml`:
+
+```toml
+model = "gpt-5.5"
+reasoning_effort = "medium"
+approval_mode = "ask"
+sandbox_mode = "workspace-write"
+sandbox_backend = "auto"
+allow_outside_workspace = false
+
+[context_window]
+auto_compact = true
+compact_threshold_tokens = 200000
+
+[[openai_hosted_tools]]
+type = "web_search"
+
+[[openai_hosted_tools]]
+type = "image_generation"
+partial_images = 2
+
+[mcp_servers.docs]
+url = "https://example.com/mcp"
+bearer_token_env_var = "DOCS_MCP_TOKEN"
+enabled_tools = ["search"]
+require_approval = "never"
+
+[mcp_servers.local]
+command = "node"
+args = ["server.js"]
 ```
 
 Override the config directory with:

@@ -20,6 +20,7 @@ export interface PersistedSession {
   conversationItems: unknown[]
   id: string
   previousResponseId?: string
+  title?: string
   uiTranscript?: PersistedTranscriptItem[]
   updatedAt: string
   workspaceRoot: string
@@ -65,6 +66,13 @@ export class SessionStore {
     return null
   }
 
+  async list(): Promise<PersistedSession[]> {
+    const sessions = await this.loadSessionsFile()
+    return Object.values(sessions.sessions)
+      .map((session) => normalizeSession(session, session.workspaceRoot))
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+  }
+
   async ensure(workspaceRoot: string): Promise<PersistedSession> {
     const existingSession = await this.load(workspaceRoot)
     if (existingSession) {
@@ -90,6 +98,7 @@ export class SessionStore {
         workspaceRoot: key,
         id,
         previousResponseId: session.previousResponseId,
+        title: session.title ?? existingSession?.title,
         conversationItems: trimSessionItems(session.conversationItems),
         uiTranscript: trimTranscriptItems(session.uiTranscript ?? existingSession?.uiTranscript ?? []),
         updatedAt: new Date().toISOString()
@@ -123,6 +132,7 @@ export class SessionStore {
         workspaceRoot: key,
         id: sessionId,
         previousResponseId: existingSession?.previousResponseId,
+        title: existingSession?.title,
         conversationItems: trimSessionItems(existingSession?.conversationItems ?? []),
         uiTranscript: trimTranscriptItems(uiTranscript),
         updatedAt: new Date().toISOString()
@@ -133,6 +143,53 @@ export class SessionStore {
       }
       delete sessions.sessions[key]
       await this.writeSessionsFile(sessions)
+    })
+  }
+
+  async rename(id: string, title: string): Promise<boolean> {
+    return this.withWriteLock(async () => {
+      const sessions = await this.loadSessionsFile()
+      const sessionEntry = findStoredSessionEntry(sessions, id)
+      if (!sessionEntry) {
+        return false
+      }
+
+      sessions.sessions[sessionEntry.key] = {
+        ...sessionEntry.session,
+        id: sessionEntry.session.id || id,
+        title: title.trim() || undefined,
+        updatedAt: new Date().toISOString()
+      }
+      await this.writeSessionsFile(sessions)
+      return true
+    })
+  }
+
+  async remove(id: string): Promise<boolean> {
+    return this.withWriteLock(async () => {
+      const sessions = await this.loadSessionsFile()
+      const sessionEntry = findStoredSessionEntry(sessions, id)
+      if (!sessionEntry) {
+        return false
+      }
+
+      delete sessions.sessions[sessionEntry.key]
+      for (const [workspaceRoot, sessionId] of Object.entries(sessions.workspaceIndex ?? {})) {
+        if (sessionId === sessionEntry.key || sessionId === sessionEntry.session.id) {
+          delete sessions.workspaceIndex?.[workspaceRoot]
+        }
+      }
+      await this.writeSessionsFile(sessions)
+      return true
+    })
+  }
+
+  async clearAll(): Promise<number> {
+    return this.withWriteLock(async () => {
+      const sessions = await this.loadSessionsFile()
+      const count = Object.keys(sessions.sessions).length
+      await this.writeSessionsFile({ sessions: {}, workspaceIndex: {} })
+      return count
     })
   }
 
@@ -222,6 +279,7 @@ function normalizeSession(session: PersistedSession, fallbackWorkspaceRoot: stri
     ...session,
     conversationItems: Array.isArray(session.conversationItems) ? session.conversationItems : [],
     id: session.id || createLegacySessionId(workspaceRoot),
+    title: typeof session.title === 'string' && session.title.trim() ? session.title : undefined,
     uiTranscript: trimTranscriptItems(session.uiTranscript ?? []),
     workspaceRoot
   }
@@ -252,6 +310,25 @@ function isSessionFile(value: unknown): value is SessionFile {
     typeof (value as { sessions?: unknown }).sessions === 'object' &&
     (value as { sessions?: unknown }).sessions !== null
   )
+}
+
+function findStoredSessionEntry(
+  sessions: SessionFile,
+  id: string
+): { key: string; session: PersistedSession } | null {
+  const directSession = sessions.sessions[id]
+  if (directSession) {
+    return { key: id, session: directSession }
+  }
+
+  for (const [key, session] of Object.entries(sessions.sessions)) {
+    const normalizedSession = normalizeSession(session, session.workspaceRoot)
+    if (normalizedSession.id === id) {
+      return { key, session }
+    }
+  }
+
+  return null
 }
 
 function transcriptItemFromHistoryItem(item: unknown): PersistedTranscriptItem | null {

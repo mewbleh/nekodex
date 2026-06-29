@@ -30,10 +30,17 @@ export type OpenAiHostedToolConfig = z.infer<typeof openAiHostedToolSchema>
 
 export const mcpServerSchema = z.object({
   serverLabel: z.string().min(1),
-  serverUrl: z.string().url(),
+  serverUrl: z.string().url().optional(),
+  command: z.string().min(1).optional(),
+  args: z.array(z.string()).optional(),
+  env: z.record(z.string()).optional(),
   authorizationEnvVar: z.string().min(1).optional(),
   allowedTools: z.array(z.string().min(1)).optional(),
-  requireApproval: z.union([z.literal('always'), z.literal('never')]).optional()
+  requireApproval: z.union([z.literal('always'), z.literal('never')]).optional(),
+  startupTimeoutSec: z.number().positive().optional(),
+  toolTimeoutSec: z.number().positive().optional()
+}).refine((server) => Boolean(server.serverUrl || server.command), {
+  message: 'MCP server config must include serverUrl/url or command.'
 })
 export type McpServerConfig = z.infer<typeof mcpServerSchema>
 
