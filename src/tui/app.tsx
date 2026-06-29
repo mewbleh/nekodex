@@ -9,6 +9,11 @@ import { APP_VERSION } from '../constants.js'
 import { MemoryStore } from '../memory/store.js'
 import { SessionStore } from '../session/store.js'
 import type { ToolApprovalRequest } from '../tools/types.js'
+import {
+  findSlashCommand,
+  formatSlashCommandHelp,
+  getSlashCommandSuggestions
+} from './slash-commands.js'
 import { buildTuiStatus } from './status.js'
 
 const ANIMATION_INTERVAL_MS = 120
@@ -16,7 +21,7 @@ const ANIMATION_FRAMES = ['-', '\\', '|', '/']
 const APPROVAL_DETAIL_ROWS = 5
 const MAX_TRANSCRIPT_ITEMS = 80
 const MIN_TRANSCRIPT_HEIGHT = 8
-const STATIC_LAYOUT_ROWS = 6
+const STATIC_LAYOUT_ROWS = 5
 
 type TranscriptRole = 'assistant' | 'error' | 'status' | 'tool' | 'user'
 
@@ -48,6 +53,8 @@ function NekodexTui({ options }: { options: TuiOptions }) {
   const { exit } = useApp()
   const { stdout } = useStdout()
   const [prompt, setPrompt] = useState('')
+  const [cursorIndex, setCursorIndex] = useState(0)
+  const [selectedCommandIndex, setSelectedCommandIndex] = useState(0)
   const [status, setStatus] = useState('Ready')
   const [isRunning, setIsRunning] = useState(false)
   const [frameIndex, setFrameIndex] = useState(0)
@@ -56,7 +63,7 @@ function NekodexTui({ options }: { options: TuiOptions }) {
     {
       id: 1,
       role: 'status',
-      text: 'Nekodex is ready. Ask for a change, review, command, or plan.'
+      text: 'Ready. Ask Nekodex to do anything.'
     }
   ])
   const nextIdRef = useRef(2)
@@ -90,7 +97,7 @@ function NekodexTui({ options }: { options: TuiOptions }) {
         })
         nextIdRef.current += 1
         setStatus(`Approve ${request.toolName}?`)
-        appendTranscript('tool', `approval requested: ${request.toolName}\n${detail}`)
+        appendTranscript('tool', `Approval requested for ${request.toolName}\n${detail}`)
       }),
     [appendTranscript]
   )
@@ -105,10 +112,18 @@ function NekodexTui({ options }: { options: TuiOptions }) {
       approvalResolverRef.current = null
       setPendingApproval(null)
       setStatus(approved ? 'Approved' : 'Denied')
-      appendTranscript('tool', `${approved ? 'approved' : 'denied'}: ${pendingApproval.request.toolName}`)
+      appendTranscript(
+        'tool',
+        `${approved ? '✔ You approved' : '✗ You denied'} ${pendingApproval.request.toolName}`
+      )
     },
     [appendTranscript, pendingApproval]
   )
+
+  const updatePrompt = useCallback((nextPrompt: string, nextCursorIndex = nextPrompt.length) => {
+    setPrompt(nextPrompt)
+    setCursorIndex(clampCursor(nextCursorIndex, nextPrompt))
+  }, [])
 
   if (!authManagerRef.current) {
     authManagerRef.current = new AuthManager(options.configStore)
@@ -131,7 +146,7 @@ function NekodexTui({ options }: { options: TuiOptions }) {
       onToolApproval: requestToolApproval,
       onStatus: (text) => {
         setStatus(text)
-        appendTranscript(text.startsWith('tool:') ? 'tool' : 'status', text)
+        appendTranscript(text.startsWith('tool:') ? 'tool' : 'status', formatStatusText(text))
       }
     })
   }
@@ -151,25 +166,25 @@ function NekodexTui({ options }: { options: TuiOptions }) {
 
   const runSlashCommand = useCallback(
     async (commandLine: string) => {
-      const command = parseSlashCommand(commandLine)
+      const command = findSlashCommand(commandLine)
 
-      if (command === 'clear') {
+      if (command?.name === 'clear') {
         setTranscript([])
         setStatus('Ready')
         return
       }
 
-      if (command === 'exit' || command === 'quit') {
+      if (command?.name === 'exit') {
         exit()
         return
       }
 
-      if (command === 'help') {
-        appendTranscript('status', SLASH_COMMAND_HELP)
+      if (command?.name === 'help') {
+        appendTranscript('status', formatSlashCommandHelp())
         return
       }
 
-      if (command === 'status') {
+      if (command?.name === 'status') {
         setStatus('Status')
         appendTranscript(
           'status',
@@ -186,7 +201,7 @@ function NekodexTui({ options }: { options: TuiOptions }) {
         return
       }
 
-      appendTranscript('error', `Unknown command: /${command || ''}. Try /help.`)
+      appendTranscript('error', `Unknown command: ${commandLine}. Try /help.`)
     },
     [appendTranscript, exit, options]
   )
@@ -197,11 +212,18 @@ function NekodexTui({ options }: { options: TuiOptions }) {
       return
     }
 
-    setPrompt('')
-    appendTranscript('user', trimmedPrompt)
+    const suggestions = getSlashCommandSuggestions(trimmedPrompt)
+    const selectedCommand = suggestions[selectedCommandIndex] ?? suggestions[0]
+    const commandPrompt =
+      trimmedPrompt.startsWith('/') && !findSlashCommand(trimmedPrompt) && selectedCommand
+        ? `/${selectedCommand.name}`
+        : trimmedPrompt
 
-    if (trimmedPrompt.startsWith('/')) {
-      void runSlashCommand(trimmedPrompt).catch((error: unknown) => {
+    updatePrompt('', 0)
+    appendTranscript('user', commandPrompt)
+
+    if (commandPrompt.startsWith('/')) {
+      void runSlashCommand(commandPrompt).catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error)
         appendTranscript('error', message)
         setStatus('Ready')
@@ -215,7 +237,7 @@ function NekodexTui({ options }: { options: TuiOptions }) {
     abortControllerRef.current = abortController
 
     void runnerRef.current
-      ?.run(trimmedPrompt, { signal: abortController.signal })
+      ?.run(commandPrompt, { signal: abortController.signal })
       .catch((error: unknown) => {
         if (abortController.signal.aborted) {
           appendTranscript('status', 'Interrupted.')
@@ -231,9 +253,11 @@ function NekodexTui({ options }: { options: TuiOptions }) {
         setIsRunning(false)
         setStatus('Ready')
       })
-  }, [appendTranscript, isRunning, prompt, runSlashCommand])
+  }, [appendTranscript, isRunning, prompt, runSlashCommand, selectedCommandIndex, updatePrompt])
 
   useInput((input, key) => {
+    const commandSuggestions = getSlashCommandSuggestions(prompt)
+
     if (key.ctrl && input === 'c') {
       if (pendingApproval) {
         resolvePendingApproval(false)
@@ -260,30 +284,84 @@ function NekodexTui({ options }: { options: TuiOptions }) {
       }
       return
     }
+    if (commandSuggestions.length > 0 && key.upArrow) {
+      setSelectedCommandIndex((current) => Math.max(0, current - 1))
+      return
+    }
+    if (commandSuggestions.length > 0 && key.downArrow) {
+      setSelectedCommandIndex((current) => Math.min(commandSuggestions.length - 1, current + 1))
+      return
+    }
+    if (commandSuggestions.length > 0 && key.tab) {
+      const selectedCommand = commandSuggestions[selectedCommandIndex] ?? commandSuggestions[0]
+      updatePrompt(`/${selectedCommand.name}`, selectedCommand.name.length + 1)
+      return
+    }
     if (key.escape) {
-      setPrompt('')
+      updatePrompt('', 0)
+      setSelectedCommandIndex(0)
       return
     }
     if (key.return) {
       submitPrompt()
       return
     }
+    if (key.leftArrow) {
+      setCursorIndex((current) => Math.max(0, current - 1))
+      return
+    }
+    if (key.rightArrow) {
+      setCursorIndex((current) => Math.min(prompt.length, current + 1))
+      return
+    }
+    if (key.ctrl && input === 'a') {
+      setCursorIndex(0)
+      return
+    }
+    if (key.ctrl && input === 'e') {
+      setCursorIndex(prompt.length)
+      return
+    }
     if (key.backspace || key.delete) {
-      setPrompt((current) => current.slice(0, -1))
+      if (key.backspace) {
+        if (cursorIndex === 0) {
+          return
+        }
+        const nextPrompt = `${prompt.slice(0, cursorIndex - 1)}${prompt.slice(cursorIndex)}`
+        updatePrompt(nextPrompt, cursorIndex - 1)
+        return
+      }
+      if (cursorIndex >= prompt.length) {
+        return
+      }
+      const nextPrompt = `${prompt.slice(0, cursorIndex)}${prompt.slice(cursorIndex + 1)}`
+      updatePrompt(nextPrompt, cursorIndex)
       return
     }
     if (!key.ctrl && input) {
-      setPrompt((current) => `${current}${input}`)
+      const nextPrompt = `${prompt.slice(0, cursorIndex)}${input}${prompt.slice(cursorIndex)}`
+      updatePrompt(nextPrompt, cursorIndex + input.length)
     }
   })
 
   const dimensions = getTerminalDimensions(stdout)
+  const commandSuggestions = useMemo(() => getSlashCommandSuggestions(prompt), [prompt])
+  useEffect(() => {
+    setSelectedCommandIndex((current) =>
+      commandSuggestions.length === 0 ? 0 : Math.min(current, commandSuggestions.length - 1)
+    )
+  }, [commandSuggestions.length])
+
   const approvalRows = pendingApproval
     ? getApprovalPanelRows(pendingApproval.detail, dimensions.columns)
     : 0
+  const suggestionRows = commandSuggestions.length > 0 && !pendingApproval
+    ? commandSuggestions.length + 1
+    : 0
+  const activityRows = isRunning || status !== 'Ready' ? 1 : 0
   const transcriptHeight = Math.max(
     MIN_TRANSCRIPT_HEIGHT,
-    dimensions.rows - STATIC_LAYOUT_ROWS - approvalRows
+    dimensions.rows - STATIC_LAYOUT_ROWS - approvalRows - suggestionRows - activityRows
   )
   const visibleTranscript = useMemo(
     () => transcript.slice(-transcriptHeight),
@@ -299,64 +377,34 @@ function NekodexTui({ options }: { options: TuiOptions }) {
 
   return (
     <Box flexDirection="column" paddingX={1}>
-      <Header
+      <Box flexDirection="column" height={transcriptHeight}>
+        {visibleTranscript.map((item) => (
+          <TranscriptLine key={item.id} item={item} width={dimensions.columns - 8} />
+        ))}
+      </Box>
+      {pendingApproval ? <ApprovalPanel approval={pendingApproval} width={dimensions.columns - 4} /> : null}
+      <ActivityLine frame={frame} isRunning={isRunning} status={status} />
+      {!pendingApproval ? (
+        <CommandForeshadowing
+          selectedIndex={selectedCommandIndex}
+          suggestions={commandSuggestions}
+        />
+      ) : null}
+      <Composer
+        cursorIndex={cursorIndex}
+        isApprovalPending={Boolean(pendingApproval)}
+        prompt={prompt}
+      />
+      <Footer
         approvalMode={approvalMode}
         contextMode={contextMode}
-        frame={frame}
         isRunning={isRunning}
         model={model}
         reasoningEffort={reasoningEffort}
         sandboxMode={sandboxMode}
-        status={status}
         width={dimensions.columns - 2}
         workspaceLabel={workspaceLabel}
       />
-      <Box marginTop={1} flexDirection="column" height={transcriptHeight}>
-        {visibleTranscript.map((item) => (
-          <TranscriptLine key={item.id} item={item} width={dimensions.columns - 12} />
-        ))}
-      </Box>
-      {pendingApproval ? <ApprovalPanel approval={pendingApproval} width={dimensions.columns - 4} /> : null}
-      <Composer isApprovalPending={Boolean(pendingApproval)} prompt={prompt} isRunning={isRunning} />
-      <Footer isRunning={isRunning} />
-    </Box>
-  )
-}
-
-function Header({
-  approvalMode,
-  contextMode,
-  frame,
-  isRunning,
-  model,
-  reasoningEffort,
-  sandboxMode,
-  status,
-  width,
-  workspaceLabel
-}: {
-  approvalMode: string
-  contextMode: string
-  frame: string
-  isRunning: boolean
-  model: string
-  reasoningEffort: string
-  sandboxMode: string
-  status: string
-  width: number
-  workspaceLabel: string
-}) {
-  const state = isRunning ? frame : 'ok'
-  const title = truncateLine(`Nekodex v${APP_VERSION} ${state} ${status}`, width)
-  const metadata = truncateLine(
-    `cwd ${workspaceLabel} | model ${model} | approval ${approvalMode} | effort ${reasoningEffort} | sandbox ${sandboxMode} | context ${contextMode}`,
-    width
-  )
-
-  return (
-    <Box flexDirection="column">
-      <Text color="cyan" bold>{title}</Text>
-      <Text color="gray">{metadata}</Text>
     </Box>
   )
 }
@@ -364,7 +412,7 @@ function Header({
 function TranscriptLine({ item, width }: { item: TranscriptItem; width: number }) {
   const role = roleStyle(item.role)
   const lines = wrapText(item.text, Math.max(24, width))
-  const prefix = role.label.padEnd(8, ' ')
+  const prefix = role.label.padEnd(2, ' ')
 
   return (
     <Box flexDirection="column">
@@ -380,95 +428,162 @@ function TranscriptLine({ item, width }: { item: TranscriptItem; width: number }
   )
 }
 
+function ActivityLine({
+  frame,
+  isRunning,
+  status
+}: {
+  frame: string
+  isRunning: boolean
+  status: string
+}) {
+  if (!isRunning && status === 'Ready') {
+    return null
+  }
+
+  const label = isRunning ? `${frame} Working` : status
+  const hint = isRunning ? 'Ctrl+C to interrupt' : 'ready'
+
+  return (
+    <Box marginTop={1}>
+      <Text color={isRunning ? 'yellow' : 'gray'}>• {label}</Text>
+      <Text color="gray"> ({hint})</Text>
+    </Box>
+  )
+}
+
+function CommandForeshadowing({
+  selectedIndex,
+  suggestions
+}: {
+  selectedIndex: number
+  suggestions: Array<{ description: string; name: string }>
+}) {
+  if (suggestions.length === 0) {
+    return null
+  }
+
+  return (
+    <Box flexDirection="column" marginTop={1}>
+      {suggestions.map((suggestion, index) => (
+        <Box key={suggestion.name}>
+          <Text color={index === selectedIndex ? 'cyan' : 'gray'}>
+            {index === selectedIndex ? '› ' : '  '}
+            {index + 1}. /{suggestion.name}
+          </Text>
+          <Text color="gray">  {suggestion.description}</Text>
+        </Box>
+      ))}
+      <Text color="gray">  Tab complete  Up/Down select  Enter run</Text>
+    </Box>
+  )
+}
+
 function ApprovalPanel({ approval, width }: { approval: PendingApproval; width: number }) {
   const detailLines = wrapText(approval.detail, Math.max(24, width - 4)).slice(
     0,
     APPROVAL_DETAIL_ROWS
   )
+  const title = getApprovalTitle(approval.request)
+  const firstDetailPrefix = approval.request.toolName === 'run_command' ? '$ ' : '  '
 
   return (
-    <Box
-      borderColor="yellow"
-      borderStyle="round"
-      flexDirection="column"
-      marginTop={1}
-      paddingX={1}
-    >
-      <Text color="yellow" bold>
-        approval required: {approval.request.toolName}
-      </Text>
+    <Box flexDirection="column" marginTop={1}>
+      <Text>{title}</Text>
       {detailLines.map((line, index) => (
         <Text key={`${approval.id}-${index}`} color="gray">
+          {index === 0 ? firstDetailPrefix : '  '}
           {line}
         </Text>
       ))}
-      <Text color="gray">Y/Enter approve  N/Esc deny  Ctrl+C stop</Text>
+      <Text color="cyan">› 1. Yes, proceed (y)</Text>
+      <Text color="gray">  2. No, tell Nekodex what to do differently (esc)</Text>
+      <Text color="gray">  Press enter to confirm or esc to cancel</Text>
     </Box>
   )
 }
 
 function Composer({
+  cursorIndex,
   isApprovalPending,
-  isRunning,
   prompt
 }: {
+  cursorIndex: number
   isApprovalPending: boolean
-  isRunning: boolean
   prompt: string
 }) {
-  const placeholder = isApprovalPending ? 'answer approval above' : isRunning ? 'working...' : 'type a request'
+  const placeholder = isApprovalPending ? 'answer approval above' : 'Ask Nekodex to do anything'
+  const beforeCursor = prompt.slice(0, cursorIndex)
+  const cursorCharacter = prompt[cursorIndex] ?? ' '
+  const afterCursor = prompt.slice(cursorIndex + 1)
 
   return (
     <Box marginTop={1}>
       <Text color="cyan" bold>
-        {'> '}
+        {'› '}
       </Text>
-      <Text>{prompt}</Text>
+      <Text>{beforeCursor}</Text>
+      <Text backgroundColor="cyan" color="black">
+        {cursorCharacter}
+      </Text>
+      <Text>{afterCursor}</Text>
       <Text color="gray">{prompt ? '' : placeholder}</Text>
     </Box>
   )
 }
 
-function Footer({ isRunning }: { isRunning: boolean }) {
+function Footer({
+  approvalMode,
+  contextMode,
+  isRunning,
+  model,
+  reasoningEffort,
+  sandboxMode,
+  width,
+  workspaceLabel
+}: {
+  approvalMode: string
+  contextMode: string
+  isRunning: boolean
+  model: string
+  reasoningEffort: string
+  sandboxMode: string
+  width: number
+  workspaceLabel: string
+}) {
+  const statusLine = truncateLine(
+    `${model} ${reasoningEffort} · ${workspaceLabel} · approval ${approvalMode} · sandbox ${sandboxMode} · context ${contextMode} · v${APP_VERSION}`,
+    width
+  )
+
   return (
     <Box flexDirection="column" marginTop={1}>
       <Text color="gray">
-        {isRunning ? 'Enter send  Esc clear  Ctrl+C stop' : 'Enter send  Esc clear  Ctrl+C quit'}
+        {isRunning ? '  Ctrl+C interrupt · Esc clear · Tab complete' : '  Enter send · Esc clear · Ctrl+C quit · Tab complete'}
       </Text>
-      <Text color="gray">/status /help /clear /exit</Text>
+      <Text color="gray">  {statusLine}</Text>
     </Box>
   )
 }
 
-const SLASH_COMMAND_HELP = [
-  '/status  show auth, model, context, approval, and sandbox',
-  '/clear   clear this TUI transcript',
-  '/exit    quit Nekodex',
-  '/help    show slash commands'
-].join('\n')
-
-function parseSlashCommand(value: string): string {
-  return value.slice(1).trim().split(/\s+/)[0]?.toLowerCase() ?? ''
-}
-
 function roleStyle(role: TranscriptRole): {
   bodyColor: 'gray' | 'red' | 'white'
-  color: 'cyan' | 'green' | 'red' | 'yellow'
+  color: 'cyan' | 'gray' | 'green' | 'red' | 'yellow'
   label: string
 } {
   if (role === 'user') {
-    return { bodyColor: 'white', color: 'green', label: 'you' }
+    return { bodyColor: 'white', color: 'cyan', label: '›' }
   }
   if (role === 'assistant') {
-    return { bodyColor: 'white', color: 'cyan', label: 'nekodex' }
+    return { bodyColor: 'white', color: 'gray', label: '•' }
   }
   if (role === 'error') {
-    return { bodyColor: 'red', color: 'red', label: 'error' }
+    return { bodyColor: 'red', color: 'red', label: '✗' }
   }
   if (role === 'tool') {
-    return { bodyColor: 'gray', color: 'yellow', label: 'tool' }
+    return { bodyColor: 'gray', color: 'yellow', label: '•' }
   }
-  return { bodyColor: 'gray', color: 'yellow', label: 'system' }
+  return { bodyColor: 'gray', color: 'gray', label: '•' }
 }
 
 function getTerminalDimensions(stdout: NodeJS.WriteStream): { columns: number; rows: number } {
@@ -505,6 +620,24 @@ function formatToolArguments(value: unknown): string {
   }
 
   return trimLongText(JSON.stringify(value, null, 2))
+}
+
+function getApprovalTitle(request: ToolApprovalRequest): string {
+  if (request.toolName === 'run_command') {
+    return 'Would you like to run the following command?'
+  }
+  if (request.toolName === 'write_file' || request.toolName === 'replace_in_file') {
+    return 'Would you like to apply the following file change?'
+  }
+  return `Would you like to allow ${request.toolName}?`
+}
+
+function formatStatusText(text: string): string {
+  if (!text.startsWith('tool:')) {
+    return text
+  }
+  const toolName = text.slice('tool:'.length).trim()
+  return toolName ? `Running ${toolName}` : text
 }
 
 function getApprovalPanelRows(detail: string, columns: number): number {
@@ -571,6 +704,10 @@ function chunkWord(value: string, width: number): string[] {
     chunks.push(value.slice(index, index + width))
   }
   return chunks
+}
+
+function clampCursor(value: number, prompt: string): number {
+  return Math.max(0, Math.min(value, prompt.length))
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
