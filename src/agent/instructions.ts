@@ -70,14 +70,12 @@ export async function listInstructionSources(
 
   for (const candidate of candidates) {
     const resolvedPath = path.resolve(candidate.path)
-    const pathKey = normalizeInstructionPathKey(resolvedPath)
-    if (seenPaths.has(pathKey)) {
+    const pathKey = await getExistingInstructionPathKey(resolvedPath)
+    if (!pathKey || seenPaths.has(pathKey)) {
       continue
     }
-    if (await exists(resolvedPath)) {
-      seenPaths.add(pathKey)
-      results.push({ ...candidate, path: resolvedPath })
-    }
+    seenPaths.add(pathKey)
+    results.push({ ...candidate, path: resolvedPath })
   }
 
   return results
@@ -132,12 +130,31 @@ function formatInstructionSource(workspaceRoot: string, source: InstructionSourc
 }
 
 function normalizeInstructionPathKey(filePath: string): string {
-  return process.platform === 'win32' ? filePath.toLowerCase() : filePath
+  return process.platform === 'win32' || process.platform === 'darwin'
+    ? filePath.toLowerCase()
+    : filePath
 }
 
-async function exists(filePath: string): Promise<boolean> {
-  return fs
-    .access(filePath)
-    .then(() => true)
-    .catch(() => false)
+async function getExistingInstructionPathKey(filePath: string): Promise<string | null> {
+  try {
+    const stat = await fs.stat(filePath)
+    if (stat.ino !== 0) {
+      return `inode:${stat.dev}:${stat.ino}`
+    }
+    return `path:${normalizeInstructionPathKey(filePath)}`
+  } catch (error) {
+    if (isNotFoundError(error)) {
+      return null
+    }
+    throw error
+  }
+}
+
+function isNotFoundError(error: unknown): boolean {
+  return Boolean(
+    error &&
+      typeof error === 'object' &&
+      'code' in error &&
+      (error as NodeJS.ErrnoException).code === 'ENOENT'
+  )
 }
