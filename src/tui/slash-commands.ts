@@ -11,6 +11,11 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     description: 'show auth, model, context, approval, and sandbox'
   },
   {
+    name: 'settings',
+    aliases: ['config', 'prefs'],
+    description: 'open the in-TUI settings panel'
+  },
+  {
     name: 'model',
     description: 'change model for this chat and future launches',
     usage: '/model <name>'
@@ -19,6 +24,22 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     name: 'effort',
     description: 'change reasoning effort',
     usage: '/effort <none|low|medium|high|xhigh>'
+  },
+  {
+    name: 'approval',
+    description: 'change tool approval mode',
+    usage: '/approval <ask|auto>'
+  },
+  {
+    name: 'sandbox',
+    description: 'change workspace sandbox mode',
+    usage: '/sandbox <read-only|workspace-write|danger-full-access>'
+  },
+  {
+    name: 'backend',
+    aliases: ['sandbox-backend'],
+    description: 'change shell sandbox backend',
+    usage: '/backend <auto|node|bwrap|none>'
   },
   {
     name: 'skills',
@@ -47,7 +68,8 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   },
   {
     name: 'compact',
-    description: 'show context compaction settings'
+    description: 'change context compaction mode',
+    usage: '/compact <auto|manual>'
   },
   {
     name: 'help',

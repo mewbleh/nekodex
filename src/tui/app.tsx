@@ -6,7 +6,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { listInstructionSources } from '../agent/instructions.js'
 import { AgentRunner, type AgentToolState } from '../agent/runner.js'
 import { AuthManager } from '../auth/manager.js'
-import { reasoningEffortSchema, type NekodexConfig } from '../config/schema.js'
+import {
+  approvalModeSchema,
+  reasoningEffortSchema,
+  sandboxBackendSchema,
+  sandboxModeSchema,
+  type NekodexConfig
+} from '../config/schema.js'
 import type { ConfigStore } from '../config/store.js'
 import { APP_VERSION } from '../constants.js'
 import { MemoryStore } from '../memory/store.js'
@@ -68,6 +74,29 @@ const EFFORT_OPTIONS = [
   { value: 'xhigh', label: 'xhigh', description: 'Maximum reasoning when the model supports it.' }
 ]
 
+const APPROVAL_OPTIONS = [
+  { value: 'ask', label: 'ask', description: 'Prompt before file writes and shell commands.' },
+  { value: 'auto', label: 'auto', description: 'Run local tools without per-call approval prompts.' }
+]
+
+const SANDBOX_OPTIONS = [
+  { value: 'read-only', label: 'read-only', description: 'Inspect only; file writes and shell commands are disabled.' },
+  { value: 'workspace-write', label: 'workspace-write', description: 'Allow changes and shell commands inside this workspace.' },
+  { value: 'danger-full-access', label: 'danger-full-access', description: 'Allow commands and path access outside this workspace.' }
+]
+
+const SANDBOX_BACKEND_OPTIONS = [
+  { value: 'auto', label: 'auto', description: 'Use Bubblewrap on supported Linux systems, otherwise Node checks.' },
+  { value: 'node', label: 'node', description: 'Use JavaScript path checks without a process sandbox.' },
+  { value: 'bwrap', label: 'bwrap', description: 'Require Bubblewrap for workspace-write shell commands.' },
+  { value: 'none', label: 'none', description: 'Disable the shell sandbox backend.' }
+]
+
+const CONTEXT_COMPACTION_OPTIONS = [
+  { value: 'auto', label: 'auto', description: 'Let the Responses API compact context when the threshold is reached.' },
+  { value: 'manual', label: 'manual', description: 'Keep compaction disabled unless you change it later.' }
+]
+
 type TranscriptRole = 'assistant' | 'error' | 'status' | 'tool' | 'user'
 
 interface TranscriptItem {
@@ -89,7 +118,7 @@ interface SelectionOption {
 }
 
 interface ActiveSelection {
-  id: 'effort' | 'model'
+  id: 'approval' | 'context' | 'effort' | 'model' | 'sandbox' | 'sandboxBackend' | 'settings'
   options: SelectionOption[]
   selectedIndex: number
   title: string
@@ -131,6 +160,7 @@ function NekodexTui({ options }: { options: TuiOptions }) {
   const { stdout } = useStdout()
   const [runtimeConfig, setRuntimeConfig] = useState(options.config)
   const [modelOverride, setModelOverride] = useState(options.model)
+  const [approvalOverride, setApprovalOverride] = useState(options.approvalMode)
   const [prompt, setPrompt] = useState('')
   const [cursorIndex, setCursorIndex] = useState(0)
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0)
@@ -154,6 +184,8 @@ function NekodexTui({ options }: { options: TuiOptions }) {
   const sessionStoreRef = useRef<SessionStore | null>(null)
   const runnerRef = useRef<AgentRunner | null>(null)
   const activeModel = modelOverride ?? runtimeConfig.model
+  const effectiveApprovalMode = approvalOverride ?? runtimeConfig.approvalMode
+  const approvalModeRef = useRef(effectiveApprovalMode)
 
   const appendTranscript = useCallback((role: TranscriptRole, text: string) => {
     setTranscript((current) => {
@@ -168,8 +200,14 @@ function NekodexTui({ options }: { options: TuiOptions }) {
   }, [])
 
   const requestToolApproval = useCallback(
-    async (request: ToolApprovalRequest): Promise<boolean> =>
-      new Promise((resolve) => {
+    async (request: ToolApprovalRequest): Promise<boolean> => {
+      if (approvalModeRef.current === 'auto') {
+        setActiveToolState({ status: 'running', toolName: request.toolName })
+        appendTranscript('tool', `Auto-approved ${request.toolName}.`)
+        return true
+      }
+
+      return new Promise((resolve) => {
         const detail = formatToolArguments(request.toolName, request.arguments)
         approvalResolverRef.current = resolve
         setPendingApproval({
@@ -181,12 +219,13 @@ function NekodexTui({ options }: { options: TuiOptions }) {
         setStatus(`Approve ${request.toolName}?`)
         setActiveToolState({ status: 'approval', toolName: request.toolName })
         appendTranscript('tool', `Approval requested for ${request.toolName}\n${detail}`)
-      }),
+      })
+    },
     [appendTranscript]
   )
 
   const resolvePendingApproval = useCallback(
-    (approved: boolean) => {
+    (approved: boolean, alwaysAllow = false) => {
       if (!pendingApproval) {
         return
       }
@@ -194,18 +233,43 @@ function NekodexTui({ options }: { options: TuiOptions }) {
       approvalResolverRef.current?.(approved)
       approvalResolverRef.current = null
       setPendingApproval(null)
-      setStatus(approved ? 'Approved' : 'Denied')
+      setStatus(alwaysAllow ? 'Always allow enabled' : approved ? 'Approved' : 'Denied')
       setActiveToolState({
         status: approved ? 'running' : 'denied',
         toolName: pendingApproval.request.toolName
       })
+      const approvalText = approved
+        ? alwaysAllow
+          ? 'always allowed'
+          : 'approved'
+        : 'denied'
       appendTranscript(
         'tool',
-        `${approved ? CHECK_MARK : CROSS_MARK} You ${approved ? 'approved' : 'denied'} ${pendingApproval.request.toolName}`
+        `${approved ? CHECK_MARK : CROSS_MARK} You ${approvalText} ${pendingApproval.request.toolName}`
       )
     },
     [appendTranscript, pendingApproval]
   )
+
+  const alwaysAllowPendingApproval = useCallback(async () => {
+    if (!pendingApproval) {
+      return
+    }
+
+    approvalModeRef.current = 'auto'
+    setApprovalOverride('auto')
+    runnerRef.current = null
+    resolvePendingApproval(true, true)
+
+    try {
+      const nextConfig = await options.configStore.patchConfig({ approvalMode: 'auto' })
+      setRuntimeConfig(nextConfig)
+      appendTranscript('status', 'Approval mode set to auto. Future tool requests will run automatically.')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      appendTranscript('error', `Could not save approval mode: ${message}`)
+    }
+  }, [appendTranscript, options.configStore, pendingApproval, resolvePendingApproval])
 
   const updatePrompt = useCallback((nextPrompt: string, nextCursorIndex = nextPrompt.length) => {
     setPrompt(nextPrompt)
@@ -215,7 +279,7 @@ function NekodexTui({ options }: { options: TuiOptions }) {
   const openModelSelection = useCallback(() => {
     setActiveSelection({
       id: 'model',
-      title: 'Select Model and Effort',
+      title: 'Select Model',
       options: MODEL_OPTIONS.map((option) => ({
         ...option,
         label: option.value === activeModel ? `${option.label} (current)` : option.label
@@ -242,6 +306,52 @@ function NekodexTui({ options }: { options: TuiOptions }) {
     })
   }, [runtimeConfig.reasoningEffort])
 
+  const openApprovalSelection = useCallback(() => {
+    setActiveSelection({
+      id: 'approval',
+      title: 'Select Approval Mode',
+      options: markCurrentOption(APPROVAL_OPTIONS, effectiveApprovalMode),
+      selectedIndex: selectedOptionIndex(APPROVAL_OPTIONS, effectiveApprovalMode)
+    })
+  }, [effectiveApprovalMode])
+
+  const openSandboxSelection = useCallback(() => {
+    setActiveSelection({
+      id: 'sandbox',
+      title: 'Select Sandbox Mode',
+      options: markCurrentOption(SANDBOX_OPTIONS, runtimeConfig.sandboxMode),
+      selectedIndex: selectedOptionIndex(SANDBOX_OPTIONS, runtimeConfig.sandboxMode)
+    })
+  }, [runtimeConfig.sandboxMode])
+
+  const openSandboxBackendSelection = useCallback(() => {
+    setActiveSelection({
+      id: 'sandboxBackend',
+      title: 'Select Sandbox Backend',
+      options: markCurrentOption(SANDBOX_BACKEND_OPTIONS, runtimeConfig.sandboxBackend),
+      selectedIndex: selectedOptionIndex(SANDBOX_BACKEND_OPTIONS, runtimeConfig.sandboxBackend)
+    })
+  }, [runtimeConfig.sandboxBackend])
+
+  const openContextSelection = useCallback(() => {
+    const value = runtimeConfig.contextWindow.autoCompact ? 'auto' : 'manual'
+    setActiveSelection({
+      id: 'context',
+      title: 'Select Context Compaction',
+      options: markCurrentOption(CONTEXT_COMPACTION_OPTIONS, value),
+      selectedIndex: selectedOptionIndex(CONTEXT_COMPACTION_OPTIONS, value)
+    })
+  }, [runtimeConfig.contextWindow.autoCompact])
+
+  const openSettingsSelection = useCallback(() => {
+    setActiveSelection({
+      id: 'settings',
+      title: 'Nekodex Settings',
+      options: buildSettingsOptions(runtimeConfig, activeModel, effectiveApprovalMode),
+      selectedIndex: 0
+    })
+  }, [activeModel, effectiveApprovalMode, runtimeConfig])
+
   const applySelection = useCallback(async () => {
     if (!activeSelection) {
       return
@@ -252,6 +362,45 @@ function NekodexTui({ options }: { options: TuiOptions }) {
       return
     }
 
+    if (activeSelection.id === 'settings') {
+      if (selectedOption.value === 'model') {
+        openModelSelection()
+        return
+      }
+      if (selectedOption.value === 'effort') {
+        openEffortSelection()
+        return
+      }
+      if (selectedOption.value === 'approval') {
+        openApprovalSelection()
+        return
+      }
+      if (selectedOption.value === 'sandbox') {
+        openSandboxSelection()
+        return
+      }
+      if (selectedOption.value === 'sandboxBackend') {
+        openSandboxBackendSelection()
+        return
+      }
+      if (selectedOption.value === 'context') {
+        openContextSelection()
+        return
+      }
+      if (selectedOption.value === 'permissions') {
+        appendTranscript('status', formatTuiPermissionStatus(runtimeConfig, effectiveApprovalMode))
+      }
+      if (selectedOption.value === 'tools') {
+        appendTranscript('status', formatTuiToolStatus(runtimeConfig))
+      }
+      if (selectedOption.value === 'mcp') {
+        appendTranscript('status', formatTuiMcpStatus(runtimeConfig))
+      }
+      setActiveSelection(null)
+      setStatus('Ready')
+      return
+    }
+
     if (activeSelection.id === 'model') {
       const nextConfig = await options.configStore.patchConfig({ model: selectedOption.value })
       setRuntimeConfig(nextConfig)
@@ -259,7 +408,7 @@ function NekodexTui({ options }: { options: TuiOptions }) {
       runnerRef.current = null
       setStatus(`Model set to ${selectedOption.value}`)
       appendTranscript('status', `Model set to ${selectedOption.value}. New requests will use it.`)
-    } else {
+    } else if (activeSelection.id === 'effort') {
       const parsedEffort = reasoningEffortSchema.safeParse(selectedOption.value)
       if (!parsedEffort.success) {
         appendTranscript('error', 'Invalid reasoning effort selection.')
@@ -275,10 +424,87 @@ function NekodexTui({ options }: { options: TuiOptions }) {
         'status',
         `Reasoning effort set to ${parsedEffort.data}. New requests will use it.`
       )
+    } else if (activeSelection.id === 'approval') {
+      const parsedApprovalMode = approvalModeSchema.safeParse(selectedOption.value)
+      if (!parsedApprovalMode.success) {
+        appendTranscript('error', 'Approval mode must be ask or auto.')
+        return
+      }
+      const nextConfig = await options.configStore.patchConfig({
+        approvalMode: parsedApprovalMode.data
+      })
+      setRuntimeConfig(nextConfig)
+      setApprovalOverride(parsedApprovalMode.data)
+      approvalModeRef.current = parsedApprovalMode.data
+      runnerRef.current = null
+      setStatus(`Approval mode set to ${parsedApprovalMode.data}`)
+      appendTranscript(
+        'status',
+        `Approval mode set to ${parsedApprovalMode.data}. New requests will use it.`
+      )
+    } else if (activeSelection.id === 'sandbox') {
+      const parsedSandboxMode = sandboxModeSchema.safeParse(selectedOption.value)
+      if (!parsedSandboxMode.success) {
+        appendTranscript(
+          'error',
+          'Sandbox mode must be read-only, workspace-write, or danger-full-access.'
+        )
+        return
+      }
+      const nextConfig = await options.configStore.patchConfig({
+        sandboxMode: parsedSandboxMode.data
+      })
+      setRuntimeConfig(nextConfig)
+      runnerRef.current = null
+      setStatus(`Sandbox mode set to ${parsedSandboxMode.data}`)
+      appendTranscript(
+        'status',
+        `Sandbox mode set to ${parsedSandboxMode.data}. New requests will use it.`
+      )
+    } else if (activeSelection.id === 'sandboxBackend') {
+      const parsedSandboxBackend = sandboxBackendSchema.safeParse(selectedOption.value)
+      if (!parsedSandboxBackend.success) {
+        appendTranscript('error', 'Sandbox backend must be auto, node, bwrap, or none.')
+        return
+      }
+      const nextConfig = await options.configStore.patchConfig({
+        sandboxBackend: parsedSandboxBackend.data
+      })
+      setRuntimeConfig(nextConfig)
+      runnerRef.current = null
+      setStatus(`Sandbox backend set to ${parsedSandboxBackend.data}`)
+      appendTranscript(
+        'status',
+        `Sandbox backend set to ${parsedSandboxBackend.data}. New requests will use it.`
+      )
+    } else if (activeSelection.id === 'context') {
+      const autoCompact = selectedOption.value === 'auto'
+      const nextConfig = await options.configStore.patchConfig({
+        contextWindow: { autoCompact }
+      })
+      setRuntimeConfig(nextConfig)
+      runnerRef.current = null
+      setStatus(`Context compaction set to ${selectedOption.value}`)
+      appendTranscript(
+        'status',
+        `Context compaction set to ${selectedOption.value}. New requests will use it.`
+      )
     }
 
     setActiveSelection(null)
-  }, [activeSelection, appendTranscript, options.configStore])
+  }, [
+    activeSelection,
+    appendTranscript,
+    effectiveApprovalMode,
+    openApprovalSelection,
+    openContextSelection,
+    openEffortSelection,
+    openModelSelection,
+    openSandboxBackendSelection,
+    openSandboxSelection,
+    options.configStore,
+    runtimeConfig
+  ])
 
   if (!authManagerRef.current) {
     authManagerRef.current = new AuthManager(options.configStore)
@@ -297,7 +523,7 @@ function NekodexTui({ options }: { options: TuiOptions }) {
       memoryStore: new MemoryStore(options.configStore),
       sessionStore: sessionStoreRef.current,
       model: activeModel,
-      approvalMode: options.approvalMode,
+      approvalMode: effectiveApprovalMode,
       onAssistantText: (text) => appendTranscript('assistant', text),
       onToolApproval: requestToolApproval,
       onToolState: setActiveToolState,
@@ -307,6 +533,10 @@ function NekodexTui({ options }: { options: TuiOptions }) {
       }
     })
   }
+
+  useEffect(() => {
+    approvalModeRef.current = effectiveApprovalMode
+  }, [effectiveApprovalMode])
 
   useEffect(() => {
     const sessionStore = sessionStoreRef.current
@@ -387,6 +617,11 @@ function NekodexTui({ options }: { options: TuiOptions }) {
         return
       }
 
+      if (command?.name === 'settings') {
+        openSettingsSelection()
+        return
+      }
+
       if (command?.name === 'model') {
         if (!commandArguments) {
           openModelSelection()
@@ -428,6 +663,86 @@ function NekodexTui({ options }: { options: TuiOptions }) {
         return
       }
 
+      if (command?.name === 'approval') {
+        if (!commandArguments) {
+          openApprovalSelection()
+          return
+        }
+
+        const parsedApprovalMode = approvalModeSchema.safeParse(commandArguments)
+        if (!parsedApprovalMode.success) {
+          appendTranscript('error', 'Approval mode must be ask or auto.')
+          return
+        }
+
+      const nextConfig = await options.configStore.patchConfig({
+        approvalMode: parsedApprovalMode.data
+      })
+      setRuntimeConfig(nextConfig)
+      setApprovalOverride(parsedApprovalMode.data)
+      approvalModeRef.current = parsedApprovalMode.data
+      runnerRef.current = null
+        setStatus(`Approval mode set to ${parsedApprovalMode.data}`)
+        appendTranscript(
+          'status',
+          `Approval mode set to ${parsedApprovalMode.data}. New requests will use it.`
+        )
+        return
+      }
+
+      if (command?.name === 'sandbox') {
+        if (!commandArguments) {
+          openSandboxSelection()
+          return
+        }
+
+        const parsedSandboxMode = sandboxModeSchema.safeParse(commandArguments)
+        if (!parsedSandboxMode.success) {
+          appendTranscript(
+            'error',
+            'Sandbox mode must be read-only, workspace-write, or danger-full-access.'
+          )
+          return
+        }
+
+        const nextConfig = await options.configStore.patchConfig({
+          sandboxMode: parsedSandboxMode.data
+        })
+        setRuntimeConfig(nextConfig)
+        runnerRef.current = null
+        setStatus(`Sandbox mode set to ${parsedSandboxMode.data}`)
+        appendTranscript(
+          'status',
+          `Sandbox mode set to ${parsedSandboxMode.data}. New requests will use it.`
+        )
+        return
+      }
+
+      if (command?.name === 'backend') {
+        if (!commandArguments) {
+          openSandboxBackendSelection()
+          return
+        }
+
+        const parsedSandboxBackend = sandboxBackendSchema.safeParse(commandArguments)
+        if (!parsedSandboxBackend.success) {
+          appendTranscript('error', 'Sandbox backend must be auto, node, bwrap, or none.')
+          return
+        }
+
+        const nextConfig = await options.configStore.patchConfig({
+          sandboxBackend: parsedSandboxBackend.data
+        })
+        setRuntimeConfig(nextConfig)
+        runnerRef.current = null
+        setStatus(`Sandbox backend set to ${parsedSandboxBackend.data}`)
+        appendTranscript(
+          'status',
+          `Sandbox backend set to ${parsedSandboxBackend.data}. New requests will use it.`
+        )
+        return
+      }
+
       if (command?.name === 'instructions' || command?.name === 'skills') {
         const instructionSources = await listInstructionSources(options.workspaceRoot)
         setInstructionCount(instructionSources.length)
@@ -454,25 +769,31 @@ function NekodexTui({ options }: { options: TuiOptions }) {
       }
 
       if (command?.name === 'permissions') {
-        appendTranscript(
-          'status',
-          [
-            `approval: ${options.approvalMode ?? runtimeConfig.approvalMode}`,
-            `sandbox: ${runtimeConfig.sandboxMode}`,
-            `sandbox backend: ${runtimeConfig.sandboxBackend}`,
-            `outside-workspace reads: ${runtimeConfig.allowOutsideWorkspace ? 'allowed' : 'blocked'}`
-          ].join('\n')
-        )
+        appendTranscript('status', formatTuiPermissionStatus(runtimeConfig, effectiveApprovalMode))
         return
       }
 
       if (command?.name === 'compact') {
+        if (!commandArguments) {
+          openContextSelection()
+          return
+        }
+
+        const compactMode = commandArguments.toLowerCase()
+        if (compactMode !== 'auto' && compactMode !== 'manual') {
+          appendTranscript('error', 'Context compaction must be auto or manual.')
+          return
+        }
+
+        const nextConfig = await options.configStore.patchConfig({
+          contextWindow: { autoCompact: compactMode === 'auto' }
+        })
+        setRuntimeConfig(nextConfig)
+        runnerRef.current = null
+        setStatus(`Context compaction set to ${compactMode}`)
         appendTranscript(
           'status',
-          [
-            `context compaction: ${runtimeConfig.contextWindow.autoCompact ? 'auto' : 'manual'}`,
-            `threshold: ${runtimeConfig.contextWindow.compactThresholdTokens.toLocaleString()} tokens`
-          ].join('\n')
+          `Context compaction set to ${compactMode}. New requests will use it.`
         )
         return
       }
@@ -487,7 +808,7 @@ function NekodexTui({ options }: { options: TuiOptions }) {
         appendTranscript(
           'status',
           await buildTuiStatus({
-            approvalMode: options.approvalMode,
+            approvalMode: effectiveApprovalMode,
             authManager: authManagerRef.current as AuthManager,
             config: runtimeConfig,
             model: activeModel,
@@ -501,7 +822,21 @@ function NekodexTui({ options }: { options: TuiOptions }) {
 
       appendTranscript('error', `Unknown command: ${commandLine}. Try /help.`)
     },
-    [activeModel, appendTranscript, exit, openEffortSelection, openModelSelection, options, runtimeConfig]
+    [
+      activeModel,
+      appendTranscript,
+      effectiveApprovalMode,
+      exit,
+      openApprovalSelection,
+      openContextSelection,
+      openEffortSelection,
+      openModelSelection,
+      openSandboxBackendSelection,
+      openSandboxSelection,
+      openSettingsSelection,
+      options,
+      runtimeConfig
+    ]
   )
 
   const submitPrompt = useCallback(() => {
@@ -606,6 +941,13 @@ function NekodexTui({ options }: { options: TuiOptions }) {
         })
         return
       }
+      if (/^[1-9]$/.test(input)) {
+        const selectedIndex = Number.parseInt(input, 10) - 1
+        if (selectedIndex >= 0 && selectedIndex < activeSelection.options.length) {
+          setActiveSelection({ ...activeSelection, selectedIndex })
+        }
+        return
+      }
       if (key.escape) {
         setActiveSelection(null)
         setStatus('Ready')
@@ -614,6 +956,14 @@ function NekodexTui({ options }: { options: TuiOptions }) {
       return
     }
     if (pendingApproval) {
+      if (input.toLowerCase() === 'p') {
+        void alwaysAllowPendingApproval().catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : String(error)
+          appendTranscript('error', message)
+          setStatus('Ready')
+        })
+        return
+      }
       if (key.return || input.toLowerCase() === 'y') {
         resolvePendingApproval(true)
         return
@@ -886,6 +1236,7 @@ function SplashPanel({
         <Text key={line} color="gray">{BULLET_MARK} {line}</Text>
       ))}
       <Text color="gray">{BULLET_MARK} Run /status to view auth, model, and context usage.</Text>
+      <Text color="gray">{PROMPT_MARK} Use /settings for model, sandbox, approvals, and tools.</Text>
       <Text color="gray">{PROMPT_MARK} Use /skills to list {skillsLine}.</Text>
     </Box>
   )
@@ -1051,8 +1402,9 @@ function ApprovalPanel({ approval, width }: { approval: PendingApproval; width: 
         </Text>
       ))}
       <Text color="cyan">{PROMPT_MARK} 1. Yes, proceed (y)</Text>
-      <Text color="gray">  2. No, tell Nekodex what to do differently (esc)</Text>
-      <Text color="gray">  Press enter to confirm or esc to cancel</Text>
+      <Text color="cyan">  2. Always allow (p)</Text>
+      <Text color="gray">  3. No, tell Nekodex what to do differently (esc)</Text>
+      <Text color="gray">  Press enter/y to approve, p to always allow, or esc/n to cancel</Text>
     </Box>
   )
 }
@@ -1270,6 +1622,90 @@ function formatTuiToolStatus(config: NekodexConfig): string {
     `- hosted OpenAI tools: ${hostedTools.length ? hostedTools.join(', ') : 'none'}`,
     `- MCP servers: ${config.mcpServers.length}`
   ].join('\n')
+}
+
+function formatTuiPermissionStatus(
+  config: NekodexConfig,
+  approvalMode: NekodexConfig['approvalMode']
+): string {
+  return [
+    `approval: ${approvalMode}`,
+    `sandbox: ${config.sandboxMode}`,
+    `sandbox backend: ${config.sandboxBackend}`,
+    `outside-workspace reads: ${config.allowOutsideWorkspace ? 'allowed' : 'blocked'}`
+  ].join('\n')
+}
+
+function buildSettingsOptions(
+  config: NekodexConfig,
+  activeModel: string,
+  approvalMode: NekodexConfig['approvalMode']
+): SelectionOption[] {
+  const compactMode = config.contextWindow.autoCompact ? 'auto' : 'manual'
+  const hostedToolCount = config.openAiHostedTools.length
+  const mcpServerCount = config.mcpServers.length
+
+  return [
+    {
+      value: 'model',
+      label: `Model: ${activeModel}`,
+      description: 'Choose the model for this chat and future launches.'
+    },
+    {
+      value: 'effort',
+      label: `Reasoning: ${config.reasoningEffort}`,
+      description: 'Choose how much reasoning budget new requests should use.'
+    },
+    {
+      value: 'approval',
+      label: `Approvals: ${approvalMode}`,
+      description: 'Choose whether local tools ask before writes and commands.'
+    },
+    {
+      value: 'sandbox',
+      label: `Sandbox: ${config.sandboxMode}`,
+      description: 'Choose the workspace access boundary for local tools.'
+    },
+    {
+      value: 'sandboxBackend',
+      label: `Backend: ${config.sandboxBackend}`,
+      description: 'Choose the process sandbox backend used by shell commands.'
+    },
+    {
+      value: 'context',
+      label: `Context: ${compactMode}`,
+      description: 'Choose automatic or manual context compaction.'
+    },
+    {
+      value: 'permissions',
+      label: 'Permissions overview',
+      description: 'Show approval, sandbox, backend, and outside-workspace read settings.'
+    },
+    {
+      value: 'tools',
+      label: `Tools: ${hostedToolCount} hosted`,
+      description: 'Show local workspace tools and configured OpenAI-hosted tools.'
+    },
+    {
+      value: 'mcp',
+      label: `MCP: ${mcpServerCount} servers`,
+      description: 'Show remote MCP server readiness and auth environment status.'
+    }
+  ]
+}
+
+function markCurrentOption(options: SelectionOption[], currentValue: string): SelectionOption[] {
+  return options.map((option) => ({
+    ...option,
+    label: option.value === currentValue ? `${option.label} (current)` : option.label
+  }))
+}
+
+function selectedOptionIndex(options: SelectionOption[], currentValue: string): number {
+  return Math.max(
+    0,
+    options.findIndex((option) => option.value === currentValue)
+  )
 }
 
 async function buildGitDiffSummary(workspaceRoot: string): Promise<string> {

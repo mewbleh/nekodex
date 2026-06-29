@@ -22,6 +22,9 @@ describe('slash commands', () => {
     expect(findSlashCommand('/skills')?.name).toBe('skills')
     expect(findSlashCommand('/instructions')?.name).toBe('skills')
     expect(findSlashCommand('/custom')?.name).toBe('skills')
+    expect(findSlashCommand('/config')?.name).toBe('settings')
+    expect(findSlashCommand('/prefs')?.name).toBe('settings')
+    expect(findSlashCommand('/sandbox-backend')?.name).toBe('backend')
   })
 
   it('suggests commands from partial input', () => {
@@ -31,7 +34,12 @@ describe('slash commands', () => {
 
   it('formats help from the command table', () => {
     expect(formatSlashCommandHelp()).toContain('/status')
+    expect(formatSlashCommandHelp()).toContain('/settings')
     expect(formatSlashCommandHelp()).toContain('/model <name>')
+    expect(formatSlashCommandHelp()).toContain('/approval <ask|auto>')
+    expect(formatSlashCommandHelp()).toContain('/sandbox <read-only|workspace-write|danger-full-access>')
+    expect(formatSlashCommandHelp()).toContain('/backend <auto|node|bwrap|none>')
+    expect(formatSlashCommandHelp()).toContain('/compact <auto|manual>')
     expect(formatSlashCommandHelp()).toContain('/skills')
     expect(formatSlashCommandHelp()).toContain('/exit')
   })

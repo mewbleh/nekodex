@@ -110,13 +110,17 @@ Inside the TUI, type `/` to open command suggestions.
 
 ```text
 /status          show auth, model, context, approval, sandbox, and instructions
+/settings        open the settings panel for model, approval, sandbox, tools, and MCP
 /model           open the model picker
 /model gpt-5.5   switch model immediately
 /effort          open the reasoning-effort picker
 /instructions    show loaded custom instruction files
+/approval        open the tool approval picker
+/sandbox         open the sandbox mode picker
+/backend         open the sandbox backend picker
 /permissions     show approval and sandbox settings
 /diff            show git status and diff summary
-/compact         show context compaction settings
+/compact         open the context compaction picker
 /clear           clear the visible transcript
 /help            show all slash commands
 /exit            quit
