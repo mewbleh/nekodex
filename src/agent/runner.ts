@@ -11,6 +11,7 @@ import {
   type ResponseOutputMessage
 } from '../openai/responses-client.js'
 import { buildConfiguredOpenAiTools } from '../openai/tools.js'
+import { buildFileEditPreview } from '../tools/edit-preview.js'
 import { ToolRegistry } from '../tools/registry.js'
 import type { ToolApprovalRequest } from '../tools/types.js'
 import { buildContextManagement } from './context-management.js'
@@ -133,6 +134,12 @@ export class AgentRunner {
           openAiBaseUrl: this.options.config.openaiBaseUrl,
           requestApproval: this.options.onToolApproval
         })
+        const editPreview = result.ok
+          ? buildFileEditPreview(functionCall.name, functionCall.arguments)
+          : null
+        if (editPreview) {
+          this.writeStatus(editPreview)
+        }
         outputs.push({
           type: 'function_call_output',
           call_id: functionCall.call_id,

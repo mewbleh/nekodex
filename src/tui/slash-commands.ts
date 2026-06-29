@@ -2,12 +2,23 @@ export interface SlashCommand {
   aliases?: string[]
   description: string
   name: string
+  usage?: string
 }
 
 export const SLASH_COMMANDS: SlashCommand[] = [
   {
     name: 'status',
     description: 'show auth, model, context, approval, and sandbox'
+  },
+  {
+    name: 'model',
+    description: 'change model for this chat and future launches',
+    usage: '/model <name>'
+  },
+  {
+    name: 'effort',
+    description: 'change reasoning effort',
+    usage: '/effort <none|low|medium|high|xhigh>'
   },
   {
     name: 'help',
@@ -26,6 +37,16 @@ export const SLASH_COMMANDS: SlashCommand[] = [
 
 export function parseSlashCommand(value: string): string {
   return value.slice(1).trim().split(/\s+/)[0]?.toLowerCase() ?? ''
+}
+
+export function parseSlashCommandArguments(value: string): string {
+  const commandLine = value.trim()
+  if (!commandLine.startsWith('/')) {
+    return ''
+  }
+
+  const [, ...parts] = commandLine.slice(1).split(/\s+/)
+  return parts.join(' ').trim()
 }
 
 export function findSlashCommand(value: string): SlashCommand | undefined {
@@ -49,5 +70,8 @@ export function getSlashCommandSuggestions(value: string, limit = 4): SlashComma
 }
 
 export function formatSlashCommandHelp(): string {
-  return SLASH_COMMANDS.map((command) => `/${command.name}  ${command.description}`).join('\n')
+  return SLASH_COMMANDS.map((command) => {
+    const commandLabel = command.usage ?? `/${command.name}`
+    return `${commandLabel}  ${command.description}`
+  }).join('\n')
 }

@@ -3,17 +3,20 @@ import { Box, Text, render, useApp, useInput, useStdout } from 'ink'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AgentRunner } from '../agent/runner.js'
 import { AuthManager } from '../auth/manager.js'
-import type { NekodexConfig } from '../config/schema.js'
+import { reasoningEffortSchema, type NekodexConfig } from '../config/schema.js'
 import type { ConfigStore } from '../config/store.js'
 import { APP_VERSION } from '../constants.js'
 import { MemoryStore } from '../memory/store.js'
 import { SessionStore } from '../session/store.js'
+import { buildFileEditPreview } from '../tools/edit-preview.js'
 import type { ToolApprovalRequest } from '../tools/types.js'
 import {
   findSlashCommand,
   formatSlashCommandHelp,
-  getSlashCommandSuggestions
+  getSlashCommandSuggestions,
+  parseSlashCommandArguments
 } from './slash-commands.js'
+import { parseTranscriptBlocks } from './markdown.js'
 import { buildTuiStatus } from './status.js'
 
 const ANIMATION_INTERVAL_MS = 120
@@ -52,6 +55,8 @@ export function startTui(options: TuiOptions): void {
 function NekodexTui({ options }: { options: TuiOptions }) {
   const { exit } = useApp()
   const { stdout } = useStdout()
+  const [runtimeConfig, setRuntimeConfig] = useState(options.config)
+  const [modelOverride, setModelOverride] = useState(options.model)
   const [prompt, setPrompt] = useState('')
   const [cursorIndex, setCursorIndex] = useState(0)
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0)
@@ -72,6 +77,7 @@ function NekodexTui({ options }: { options: TuiOptions }) {
   const authManagerRef = useRef<AuthManager | null>(null)
   const sessionStoreRef = useRef<SessionStore | null>(null)
   const runnerRef = useRef<AgentRunner | null>(null)
+  const activeModel = modelOverride ?? runtimeConfig.model
 
   const appendTranscript = useCallback((role: TranscriptRole, text: string) => {
     setTranscript((current) => {
@@ -88,7 +94,7 @@ function NekodexTui({ options }: { options: TuiOptions }) {
   const requestToolApproval = useCallback(
     async (request: ToolApprovalRequest): Promise<boolean> =>
       new Promise((resolve) => {
-        const detail = formatToolArguments(request.arguments)
+        const detail = formatToolArguments(request.toolName, request.arguments)
         approvalResolverRef.current = resolve
         setPendingApproval({
           detail,
@@ -136,11 +142,11 @@ function NekodexTui({ options }: { options: TuiOptions }) {
   if (!runnerRef.current) {
     runnerRef.current = new AgentRunner({
       authManager: authManagerRef.current,
-      config: options.config,
+      config: runtimeConfig,
       workspaceRoot: options.workspaceRoot,
       memoryStore: new MemoryStore(options.configStore),
       sessionStore: sessionStoreRef.current,
-      model: options.model,
+      model: activeModel,
       approvalMode: options.approvalMode,
       onAssistantText: (text) => appendTranscript('assistant', text),
       onToolApproval: requestToolApproval,
@@ -167,6 +173,7 @@ function NekodexTui({ options }: { options: TuiOptions }) {
   const runSlashCommand = useCallback(
     async (commandLine: string) => {
       const command = findSlashCommand(commandLine)
+      const commandArguments = parseSlashCommandArguments(commandLine)
 
       if (command?.name === 'clear') {
         setTranscript([])
@@ -184,6 +191,60 @@ function NekodexTui({ options }: { options: TuiOptions }) {
         return
       }
 
+      if (command?.name === 'model') {
+        if (!commandArguments) {
+          appendTranscript(
+            'status',
+            [
+              `Current model: ${activeModel}`,
+              'Usage: /model <name>',
+              'Examples: /model gpt-5.5, /model gpt-5.4-mini'
+            ].join('\n')
+          )
+          return
+        }
+
+        const nextModel = commandArguments.split(/\s+/)[0]
+        const nextConfig = await options.configStore.patchConfig({ model: nextModel })
+        setRuntimeConfig(nextConfig)
+        setModelOverride(nextModel)
+        runnerRef.current = null
+        setStatus(`Model set to ${nextModel}`)
+        appendTranscript('status', `Model set to ${nextModel}. New requests will use it.`)
+        return
+      }
+
+      if (command?.name === 'effort') {
+        if (!commandArguments) {
+          appendTranscript(
+            'status',
+            [
+              `Current reasoning effort: ${runtimeConfig.reasoningEffort}`,
+              'Usage: /effort <none|low|medium|high|xhigh>'
+            ].join('\n')
+          )
+          return
+        }
+
+        const parsedEffort = reasoningEffortSchema.safeParse(commandArguments)
+        if (!parsedEffort.success) {
+          appendTranscript('error', 'Reasoning effort must be one of none, low, medium, high, xhigh.')
+          return
+        }
+
+        const nextConfig = await options.configStore.patchConfig({
+          reasoningEffort: parsedEffort.data
+        })
+        setRuntimeConfig(nextConfig)
+        runnerRef.current = null
+        setStatus(`Reasoning effort set to ${parsedEffort.data}`)
+        appendTranscript(
+          'status',
+          `Reasoning effort set to ${parsedEffort.data}. New requests will use it.`
+        )
+        return
+      }
+
       if (command?.name === 'status') {
         setStatus('Status')
         appendTranscript(
@@ -191,8 +252,8 @@ function NekodexTui({ options }: { options: TuiOptions }) {
           await buildTuiStatus({
             approvalMode: options.approvalMode,
             authManager: authManagerRef.current as AuthManager,
-            config: options.config,
-            model: options.model,
+            config: runtimeConfig,
+            model: activeModel,
             sessionStore: sessionStoreRef.current as SessionStore,
             workspaceRoot: options.workspaceRoot
           })
@@ -203,7 +264,7 @@ function NekodexTui({ options }: { options: TuiOptions }) {
 
       appendTranscript('error', `Unknown command: ${commandLine}. Try /help.`)
     },
-    [appendTranscript, exit, options]
+    [activeModel, appendTranscript, exit, options, runtimeConfig]
   )
 
   const submitPrompt = useCallback(() => {
@@ -367,13 +428,12 @@ function NekodexTui({ options }: { options: TuiOptions }) {
     () => transcript.slice(-transcriptHeight),
     [transcript, transcriptHeight]
   )
-  const model = options.model ?? options.config.model
   const workspaceLabel = compactPath(options.workspaceRoot, dimensions.columns)
   const frame = ANIMATION_FRAMES[frameIndex % ANIMATION_FRAMES.length]
-  const approvalMode = options.approvalMode ?? options.config.approvalMode
-  const contextMode = options.config.contextWindow.autoCompact ? 'auto' : 'manual'
-  const reasoningEffort = options.config.reasoningEffort
-  const sandboxMode = options.config.sandboxMode
+  const approvalMode = options.approvalMode ?? runtimeConfig.approvalMode
+  const contextMode = runtimeConfig.contextWindow.autoCompact ? 'auto' : 'manual'
+  const reasoningEffort = runtimeConfig.reasoningEffort
+  const sandboxMode = runtimeConfig.sandboxMode
 
   return (
     <Box flexDirection="column" paddingX={1}>
@@ -399,7 +459,7 @@ function NekodexTui({ options }: { options: TuiOptions }) {
         approvalMode={approvalMode}
         contextMode={contextMode}
         isRunning={isRunning}
-        model={model}
+        model={activeModel}
         reasoningEffort={reasoningEffort}
         sandboxMode={sandboxMode}
         width={dimensions.columns - 2}
@@ -409,23 +469,61 @@ function NekodexTui({ options }: { options: TuiOptions }) {
   )
 }
 
+type TranscriptTextColor = 'cyan' | 'gray' | 'green' | 'red' | 'white' | 'yellow'
+
+interface TranscriptRenderRow {
+  color: TranscriptTextColor
+  text: string
+}
+
 function TranscriptLine({ item, width }: { item: TranscriptItem; width: number }) {
   const role = roleStyle(item.role)
-  const lines = wrapText(item.text, Math.max(24, width))
+  const rows = buildTranscriptRows(item.text, role.bodyColor, Math.max(24, width))
   const prefix = role.label.padEnd(2, ' ')
 
   return (
     <Box flexDirection="column">
-      {lines.map((line, index) => (
+      {rows.map((row, index) => (
         <Box key={`${item.id}-${index}`}>
           <Text color={role.color} bold>
             {index === 0 ? prefix : ' '.repeat(prefix.length)}
           </Text>
-          <Text color={role.bodyColor}>{line || ' '}</Text>
+          <Text color={row.color}>{row.text || ' '}</Text>
         </Box>
       ))}
     </Box>
   )
+}
+
+function buildTranscriptRows(
+  value: string,
+  bodyColor: TranscriptTextColor,
+  width: number
+): TranscriptRenderRow[] {
+  const rows: TranscriptRenderRow[] = []
+  const codeIndent = '    '
+  const codeWidth = Math.max(8, width - codeIndent.length)
+
+  for (const block of parseTranscriptBlocks(value)) {
+    if (block.type === 'code') {
+      const codeLines = block.lines.length > 0 ? block.lines : ['']
+      for (const line of codeLines) {
+        for (const chunk of wrapCodeLine(line, codeWidth)) {
+          rows.push({ color: 'cyan', text: `${codeIndent}${chunk}` })
+        }
+      }
+      continue
+    }
+
+    for (const line of block.lines) {
+      const rowColor = line.startsWith('[+] ') ? 'green' : bodyColor
+      for (const wrappedLine of wrapText(line, width)) {
+        rows.push({ color: rowColor, text: wrappedLine })
+      }
+    }
+  }
+
+  return rows.length > 0 ? rows : [{ color: bodyColor, text: '' }]
 }
 
 function ActivityLine({
@@ -567,7 +665,7 @@ function Footer({
 }
 
 function roleStyle(role: TranscriptRole): {
-  bodyColor: 'gray' | 'red' | 'white'
+  bodyColor: TranscriptTextColor
   color: 'cyan' | 'gray' | 'green' | 'red' | 'yellow'
   label: string
 } {
@@ -604,7 +702,12 @@ function compactPath(value: string, columns: number): string {
   return `...${path.sep}${tail}`
 }
 
-function formatToolArguments(value: unknown): string {
+function formatToolArguments(toolName: string, value: unknown): string {
+  const editPreview = buildFileEditPreview(toolName, value, { lineLimit: 8 })
+  if (editPreview) {
+    return trimLongText(editPreview)
+  }
+
   if (!isRecord(value)) {
     return trimLongText(JSON.stringify(value, null, 2) ?? String(value))
   }
@@ -696,6 +799,13 @@ function wrapText(value: string, width: number): string[] {
     wrapped.push(line)
   }
   return wrapped
+}
+
+function wrapCodeLine(value: string, width: number): string[] {
+  if (!value) {
+    return ['']
+  }
+  return chunkWord(value, Math.max(1, width))
 }
 
 function chunkWord(value: string, width: number): string[] {
