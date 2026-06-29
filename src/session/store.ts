@@ -9,15 +9,31 @@ interface SessionFile {
   workspaceIndex?: Record<string, string>
 }
 
+export type PersistedTranscriptRole = 'assistant' | 'error' | 'status' | 'tool' | 'user'
+
+export interface PersistedTranscriptItem {
+  role: PersistedTranscriptRole
+  text: string
+}
+
 export interface PersistedSession {
   conversationItems: unknown[]
   id: string
   previousResponseId?: string
+  uiTranscript?: PersistedTranscriptItem[]
   updatedAt: string
   workspaceRoot: string
 }
 
+type SaveSessionInput = Omit<PersistedSession, 'id' | 'updatedAt' | 'workspaceRoot'> & {
+  id?: string
+}
+
+const MAX_SESSION_TRANSCRIPT_ITEMS = 200
+
 export class SessionStore {
+  private writeChain: Promise<void> = Promise.resolve()
+
   constructor(private readonly configStore: ConfigStore) {}
 
   async load(workspaceRoot: string): Promise<PersistedSession | null> {
@@ -64,44 +80,80 @@ export class SessionStore {
     return createdSession
   }
 
-  async save(
+  async save(workspaceRoot: string, session: SaveSessionInput): Promise<string> {
+    return this.withWriteLock(async () => {
+      const sessions = await this.loadSessionsFile()
+      const key = sessionKey(workspaceRoot)
+      const id = session.id ?? sessions.workspaceIndex?.[key] ?? createSessionId()
+      const existingSession = sessions.sessions[id] ?? sessions.sessions[key]
+      sessions.sessions[id] = {
+        workspaceRoot: key,
+        id,
+        previousResponseId: session.previousResponseId,
+        conversationItems: trimSessionItems(session.conversationItems),
+        uiTranscript: trimTranscriptItems(session.uiTranscript ?? existingSession?.uiTranscript ?? []),
+        updatedAt: new Date().toISOString()
+      }
+      sessions.workspaceIndex = {
+        ...sessions.workspaceIndex,
+        [key]: id
+      }
+      delete sessions.sessions[key]
+      await this.writeSessionsFile(sessions)
+      return id
+    })
+  }
+
+  async saveTranscript(
     workspaceRoot: string,
-    session: Omit<PersistedSession, 'id' | 'updatedAt' | 'workspaceRoot'> & { id?: string }
-  ): Promise<string> {
-    const sessions = await this.loadSessionsFile()
-    const key = sessionKey(workspaceRoot)
-    const id = session.id ?? sessions.workspaceIndex?.[key] ?? createSessionId()
-    sessions.sessions[id] = {
-      workspaceRoot: key,
-      id,
-      previousResponseId: session.previousResponseId,
-      conversationItems: trimSessionItems(session.conversationItems),
-      updatedAt: new Date().toISOString()
-    }
-    sessions.workspaceIndex = {
-      ...sessions.workspaceIndex,
-      [key]: id
-    }
-    delete sessions.sessions[key]
-    await this.writeSessionsFile(sessions)
-    return id
+    id: string,
+    uiTranscript: PersistedTranscriptItem[]
+  ): Promise<void> {
+    await this.withWriteLock(async () => {
+      const sessions = await this.loadSessionsFile()
+      const key = sessionKey(workspaceRoot)
+      const indexedSessionId = sessions.workspaceIndex?.[key]
+      const existingSession =
+        sessions.sessions[id] ??
+        (indexedSessionId ? sessions.sessions[indexedSessionId] : undefined) ??
+        sessions.sessions[key]
+      const sessionId = existingSession?.id ?? id
+
+      sessions.sessions[sessionId] = {
+        workspaceRoot: key,
+        id: sessionId,
+        previousResponseId: existingSession?.previousResponseId,
+        conversationItems: trimSessionItems(existingSession?.conversationItems ?? []),
+        uiTranscript: trimTranscriptItems(uiTranscript),
+        updatedAt: new Date().toISOString()
+      }
+      sessions.workspaceIndex = {
+        ...sessions.workspaceIndex,
+        [key]: sessionId
+      }
+      delete sessions.sessions[key]
+      await this.writeSessionsFile(sessions)
+    })
   }
 
   async clear(workspaceRoot: string): Promise<boolean> {
-    const sessions = await this.loadSessionsFile()
-    const key = sessionKey(workspaceRoot)
-    const sessionId = sessions.workspaceIndex?.[key]
-    const hadSession = Boolean(sessionId && sessions.sessions[sessionId]) || Boolean(sessions.sessions[key])
-    if (!hadSession) {
-      return false
-    }
-    if (sessionId) {
-      delete sessions.sessions[sessionId]
-      delete sessions.workspaceIndex?.[key]
-    }
-    delete sessions.sessions[key]
-    await this.writeSessionsFile(sessions)
-    return true
+    return this.withWriteLock(async () => {
+      const sessions = await this.loadSessionsFile()
+      const key = sessionKey(workspaceRoot)
+      const sessionId = sessions.workspaceIndex?.[key]
+      const hadSession =
+        Boolean(sessionId && sessions.sessions[sessionId]) || Boolean(sessions.sessions[key])
+      if (!hadSession) {
+        return false
+      }
+      if (sessionId) {
+        delete sessions.sessions[sessionId]
+        delete sessions.workspaceIndex?.[key]
+      }
+      delete sessions.sessions[key]
+      await this.writeSessionsFile(sessions)
+      return true
+    })
   }
 
   private async loadSessionsFile(): Promise<SessionFile> {
@@ -131,10 +183,29 @@ export class SessionStore {
     })
     await fs.chmod(this.configStore.sessionsPath, 0o600).catch(() => undefined)
   }
+
+  private async withWriteLock<T>(operation: () => Promise<T>): Promise<T> {
+    const run = this.writeChain.then(operation, operation)
+    this.writeChain = run.then(
+      () => undefined,
+      () => undefined
+    )
+    return run
+  }
 }
 
 function trimSessionItems(items: unknown[]): unknown[] {
   return items.slice(-MAX_SESSION_HISTORY_ITEMS)
+}
+
+function trimTranscriptItems(items: PersistedTranscriptItem[]): PersistedTranscriptItem[] {
+  return items
+    .filter(isPersistedTranscriptItem)
+    .map((item) => ({
+      role: item.role,
+      text: item.text
+    }))
+    .slice(-MAX_SESSION_TRANSCRIPT_ITEMS)
 }
 
 function sessionKey(workspaceRoot: string): string {
@@ -149,9 +220,24 @@ function normalizeSession(session: PersistedSession, fallbackWorkspaceRoot: stri
   const workspaceRoot = path.resolve(session.workspaceRoot || fallbackWorkspaceRoot)
   return {
     ...session,
+    conversationItems: Array.isArray(session.conversationItems) ? session.conversationItems : [],
     id: session.id || createLegacySessionId(workspaceRoot),
+    uiTranscript: trimTranscriptItems(session.uiTranscript ?? []),
     workspaceRoot
   }
+}
+
+export function transcriptFromSession(session: PersistedSession): PersistedTranscriptItem[] {
+  const savedTranscript = trimTranscriptItems(session.uiTranscript ?? [])
+  if (savedTranscript.length > 0) {
+    return savedTranscript
+  }
+
+  return trimTranscriptItems(
+    session.conversationItems
+      .map((item) => transcriptItemFromHistoryItem(item))
+      .filter((item): item is PersistedTranscriptItem => Boolean(item))
+  )
 }
 
 function createLegacySessionId(workspaceRoot: string): string {
@@ -168,6 +254,75 @@ function isSessionFile(value: unknown): value is SessionFile {
   )
 }
 
+function transcriptItemFromHistoryItem(item: unknown): PersistedTranscriptItem | null {
+  if (!isRecord(item)) {
+    return null
+  }
+
+  if (item.type === 'function_call') {
+    const toolName = typeof item.name === 'string' ? item.name : 'tool'
+    return { role: 'tool', text: `tool: ${toolName}` }
+  }
+
+  if (item.type !== 'message') {
+    return null
+  }
+
+  const text = collectContentText(item.content).trim()
+  if (!text) {
+    return null
+  }
+
+  if (item.role === 'user') {
+    return { role: 'user', text }
+  }
+  if (item.role === 'assistant') {
+    return { role: 'assistant', text }
+  }
+
+  return null
+}
+
+function collectContentText(content: unknown): string {
+  if (typeof content === 'string') {
+    return content
+  }
+  if (!Array.isArray(content)) {
+    return ''
+  }
+  return content
+    .map((item) => {
+      if (typeof item === 'string') {
+        return item
+      }
+      if (isRecord(item) && typeof item.text === 'string') {
+        return item.text
+      }
+      return ''
+    })
+    .filter(Boolean)
+    .join('\n')
+}
+
+function isPersistedTranscriptItem(value: unknown): value is PersistedTranscriptItem {
+  return (
+    isRecord(value) &&
+    isPersistedTranscriptRole(value.role) &&
+    typeof value.text === 'string' &&
+    value.text.length > 0
+  )
+}
+
+function isPersistedTranscriptRole(value: unknown): value is PersistedTranscriptRole {
+  return (
+    value === 'assistant' ||
+    value === 'error' ||
+    value === 'status' ||
+    value === 'tool' ||
+    value === 'user'
+  )
+}
+
 function isNotFoundError(error: unknown): boolean {
   return Boolean(
     error &&
@@ -175,4 +330,8 @@ function isNotFoundError(error: unknown): boolean {
       'code' in error &&
       (error as NodeJS.ErrnoException).code === 'ENOENT'
   )
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
 }

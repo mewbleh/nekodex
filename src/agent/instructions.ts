@@ -27,6 +27,16 @@ const PERSONAL_INSTRUCTION_FILE_NAMES = [
   'agent.md'
 ]
 
+const DEFAULT_NEKODEX_INSTRUCTIONS = [
+  'You are Nekodex, an agentic coding assistant running in a local CLI.',
+  'Work in the user workspace. Inspect relevant files before editing and follow the project style you find.',
+  'Preserve user work. Do not overwrite, remove, or revert changes you did not make unless the user explicitly asks.',
+  'Use tools to read files, search, edit, and run commands. Prefer focused edits over broad rewrites.',
+  'For code changes, verify with the narrowest useful test, typecheck, build, or syntax check when practical.',
+  'Do not claim a command passed unless you ran it. If verification is blocked, say exactly what blocked it.',
+  'Keep final answers concise, mention changed files and verification, and include concrete next steps only when useful.'
+]
+
 export interface InstructionSource {
   path: string
   scope: 'env' | 'personal' | 'project'
@@ -45,10 +55,7 @@ export async function buildInstructions(
   const instructionBlock = await buildInstructionBlock(workspaceRoot, options)
 
   return [
-    'You are Nekodex, a lightweight coding agent running in a local TypeScript CLI.',
-    'Work directly in the user workspace. Prefer small, clear edits and verify changes with tests or focused commands when practical.',
-    'Use available tools for reading files, writing files, replacing text, searching, and running shell commands.',
-    'Before editing, inspect the relevant files. Keep responses concise and include concrete file paths and commands.',
+    ...DEFAULT_NEKODEX_INSTRUCTIONS,
     instructionBlock,
     memoryInstructionBlock
   ]
@@ -93,11 +100,17 @@ async function buildInstructionBlock(
   const renderedInstructions = await Promise.all(
     instructionSources.map(async (source) => {
       const content = await fs.readFile(source.path, 'utf8')
-      return `From ${formatInstructionSource(workspaceRoot, source)}:\n${content.trimEnd()}`
+      return [
+        `# AGENTS.md instructions for ${formatInstructionSource(workspaceRoot, source)}`,
+        '',
+        '<INSTRUCTIONS>',
+        content.trimEnd(),
+        '</INSTRUCTIONS>'
+      ].join('\n')
     })
   )
 
-  return `Custom instruction files:\n\n${renderedInstructions.join('\n\n')}`
+  return renderedInstructions.join('\n\n')
 }
 
 function envInstructionSources(value: string | undefined): InstructionSource[] {

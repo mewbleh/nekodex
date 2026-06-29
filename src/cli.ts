@@ -18,7 +18,7 @@ import { APP_VERSION, DEFAULT_AUTH_ISSUER, OAUTH_CLIENT_ID } from './constants.j
 import { AgentRunner } from './agent/runner.js'
 import { NekodexError } from './errors.js'
 import { MemoryStore } from './memory/store.js'
-import { SessionStore } from './session/store.js'
+import { SessionStore, transcriptFromSession } from './session/store.js'
 import { startTui } from './tui/app.js'
 import { startCommandHub } from './tui/command-hub.js'
 import { serveMcp } from './mcp/server.js'
@@ -91,6 +91,7 @@ program
       config,
       workspaceRoot,
       sessionId: session.id,
+      initialTranscript: transcriptFromSession(session),
       model: options.model,
       approvalMode: options.yes ? 'auto' : config.approvalMode
     })
@@ -120,6 +121,7 @@ program
       config,
       workspaceRoot: session.workspaceRoot,
       sessionId: session.id,
+      initialTranscript: transcriptFromSession(session),
       model: options.model,
       approvalMode: options.yes ? 'auto' : config.approvalMode
     })
@@ -488,6 +490,7 @@ async function runChat(prompt: string, options: RootOptions): Promise<void> {
       config,
       workspaceRoot,
       sessionId: session.id,
+      initialTranscript: transcriptFromSession(session),
       model: options.model,
       approvalMode: options.yes ? 'auto' : config.approvalMode
     })

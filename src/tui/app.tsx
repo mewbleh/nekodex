@@ -10,7 +10,7 @@ import { reasoningEffortSchema, type NekodexConfig } from '../config/schema.js'
 import type { ConfigStore } from '../config/store.js'
 import { APP_VERSION } from '../constants.js'
 import { MemoryStore } from '../memory/store.js'
-import { SessionStore } from '../session/store.js'
+import { SessionStore, type PersistedTranscriptItem } from '../session/store.js'
 import { buildFileEditPreview } from '../tools/edit-preview.js'
 import type { ToolApprovalRequest } from '../tools/types.js'
 import {
@@ -98,6 +98,7 @@ export interface TuiOptions {
   config: NekodexConfig
   workspaceRoot: string
   sessionId: string
+  initialTranscript?: PersistedTranscriptItem[]
   model?: string
   approvalMode?: 'ask' | 'auto'
 }
@@ -137,14 +138,13 @@ function NekodexTui({ options }: { options: TuiOptions }) {
   const [instructionCount, setInstructionCount] = useState(0)
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null)
   const [activeSelection, setActiveSelection] = useState<ActiveSelection | null>(null)
-  const [transcript, setTranscript] = useState<TranscriptItem[]>([
-    {
-      id: 1,
-      role: 'status',
-      text: 'Nekodex is ready. Type /help for commands or ask for a code change.'
-    }
-  ])
-  const nextIdRef = useRef(2)
+  const [transcript, setTranscript] = useState<TranscriptItem[]>(() =>
+    createInitialTranscript(options.initialTranscript)
+  )
+  const nextIdRef = useRef(0)
+  if (nextIdRef.current === 0) {
+    nextIdRef.current = transcript.length + 1
+  }
   const abortControllerRef = useRef<AbortController | null>(null)
   const approvalResolverRef = useRef<((approved: boolean) => void) | null>(null)
   const authManagerRef = useRef<AuthManager | null>(null)
@@ -300,6 +300,17 @@ function NekodexTui({ options }: { options: TuiOptions }) {
   }
 
   useEffect(() => {
+    const sessionStore = sessionStoreRef.current
+    if (!sessionStore) {
+      return
+    }
+
+    void sessionStore
+      .saveTranscript(options.workspaceRoot, options.sessionId, toPersistedTranscriptItems(transcript))
+      .catch(() => undefined)
+  }, [options.sessionId, options.workspaceRoot, transcript])
+
+  useEffect(() => {
     if (!isRunning) {
       setFrameIndex(0)
       return undefined
@@ -393,7 +404,7 @@ function NekodexTui({ options }: { options: TuiOptions }) {
         return
       }
 
-      if (command?.name === 'instructions') {
+      if (command?.name === 'instructions' || command?.name === 'skills') {
         const instructionSources = await listInstructionSources(options.workspaceRoot)
         setInstructionCount(instructionSources.length)
         appendTranscript('status', formatInstructionSources(instructionSources, options.workspaceRoot))
@@ -674,20 +685,17 @@ function NekodexTui({ options }: { options: TuiOptions }) {
   )
   const workspaceLabel = compactPath(options.workspaceRoot, dimensions.columns)
   const frame = ANIMATION_FRAMES[frameIndex % ANIMATION_FRAMES.length]
-  const approvalMode = options.approvalMode ?? runtimeConfig.approvalMode
-  const contextMode = runtimeConfig.contextWindow.autoCompact ? 'auto' : 'manual'
   const reasoningEffort = runtimeConfig.reasoningEffort
-  const sandboxBackend = runtimeConfig.sandboxBackend
-  const sandboxMode = runtimeConfig.sandboxMode
 
   return (
     <Box flexDirection="column" paddingX={1}>
       <Box flexDirection="column" height={transcriptHeight}>
         {showSplash ? (
           <SplashPanel
-            contextMode={contextMode}
+            instructionCount={instructionCount}
             model={activeModel}
             sessionId={options.sessionId}
+            width={dimensions.columns - 4}
             workspaceLabel={workspaceLabel}
           />
         ) : null}
@@ -716,14 +724,9 @@ function NekodexTui({ options }: { options: TuiOptions }) {
         </>
       ) : null}
       <Footer
-        approvalMode={approvalMode}
-        contextMode={contextMode}
-        instructionCount={instructionCount}
         isRunning={isRunning}
         model={activeModel}
         reasoningEffort={reasoningEffort}
-        sandboxBackend={sandboxBackend}
-        sandboxMode={sandboxMode}
         width={dimensions.columns - 2}
         workspaceLabel={workspaceLabel}
       />
@@ -789,27 +792,45 @@ function buildTranscriptRows(
 }
 
 function SplashPanel({
-  contextMode,
+  instructionCount,
   model,
   sessionId,
+  width,
   workspaceLabel
 }: {
-  contextMode: string
+  instructionCount: number
   model: string
   sessionId: string
+  width: number
   workspaceLabel: string
 }) {
+  const panelWidth = Math.min(48, Math.max(38, width))
+  const skillsLine =
+    instructionCount === 1 ? '1 custom instruction file' : `${instructionCount} custom instruction files`
+
   return (
     <Box flexDirection="column" marginTop={1}>
-      <Text color="cyan" bold>  Nekodex</Text>
-      <Text color="gray">  Lightweight agentic coding in your terminal</Text>
+      <Box borderColor="gray" borderStyle="round" flexDirection="column" paddingX={1} width={panelWidth}>
+        <Text color="cyan" bold>{`${PROMPT_MARK}_ Nekodex (v${APP_VERSION})`}</Text>
+        <Text> </Text>
+        <Text>
+          <Text color="gray">model:     </Text>
+          <Text>{model}</Text>
+          <Text color="gray">   /model to change</Text>
+        </Text>
+        <Text>
+          <Text color="gray">directory: </Text>
+          <Text>{workspaceLabel}</Text>
+        </Text>
+        <Text>
+          <Text color="gray">session:   </Text>
+          <Text>{sessionId}</Text>
+        </Text>
+      </Box>
       <Text> </Text>
-      <Text color="gray">  model {model} {DOT_MARK} context {contextMode} {DOT_MARK} cwd {workspaceLabel}</Text>
-      <Text color="gray">  session {sessionId} {DOT_MARK} resume with nekodex resume {sessionId}</Text>
-      <Text> </Text>
-      <Text color="gray">  /model        choose model and reasoning effort</Text>
-      <Text color="gray">  /status       show auth, sandbox, context, and instructions</Text>
-      <Text color="gray">  /instructions show custom instruction files</Text>
+      <Text color="gray">Tip: GPT-5.5 is Nekodex's default agentic coding model.</Text>
+      <Text color="gray">{BULLET_MARK} Run /status to view auth, model, and context usage.</Text>
+      <Text color="gray">{PROMPT_MARK} Use /skills to list {skillsLine}.</Text>
     </Box>
   )
 }
@@ -855,7 +876,7 @@ function CommandForeshadowing({
         <Box key={suggestion.name}>
           <Text color={index === selectedIndex ? 'cyan' : 'gray'}>
             {index === selectedIndex ? `${PROMPT_MARK} ` : '  '}
-            {index + 1}. {suggestion.usage ?? `/${suggestion.name}`}
+            /{suggestion.name}
           </Text>
           <Text color="gray">  {suggestion.description}</Text>
         </Box>
@@ -956,31 +977,22 @@ function Composer({
 }
 
 function Footer({
-  approvalMode,
-  contextMode,
-  instructionCount,
   isRunning,
   model,
   reasoningEffort,
-  sandboxBackend,
-  sandboxMode,
   width,
   workspaceLabel
 }: {
-  approvalMode: string
-  contextMode: string
-  instructionCount: number
   isRunning: boolean
   model: string
   reasoningEffort: string
-  sandboxBackend: string
-  sandboxMode: string
   width: number
   workspaceLabel: string
 }) {
-  const modeHint = isRunning ? 'Esc to interrupt' : '/help for commands'
+  const effortLabel = reasoningEffort === 'medium' ? 'default' : reasoningEffort
+  const modeHint = isRunning ? ` ${DOT_MARK} Esc to interrupt` : ''
   const statusLine = truncateLine(
-    `${model} ${reasoningEffort} ${DOT_MARK} Context ${contextMode} ${DOT_MARK} ${workspaceLabel} ${DOT_MARK} approval ${approvalMode} ${DOT_MARK} sandbox ${sandboxMode}/${sandboxBackend} ${DOT_MARK} instructions ${instructionCount} ${DOT_MARK} ${modeHint} ${DOT_MARK} v${APP_VERSION}`,
+    `${model} ${effortLabel} ${DOT_MARK} ${workspaceLabel}${modeHint}`,
     width
   )
 
@@ -1194,6 +1206,31 @@ function chunkWord(value: string, width: number): string[] {
 
 function clampCursor(value: number, prompt: string): number {
   return Math.max(0, Math.min(value, prompt.length))
+}
+
+function createInitialTranscript(items: PersistedTranscriptItem[] | undefined): TranscriptItem[] {
+  if (items?.length) {
+    return items.slice(-MAX_TRANSCRIPT_ITEMS).map((item, index) => ({
+      id: index + 1,
+      role: item.role,
+      text: item.text
+    }))
+  }
+
+  return [
+    {
+      id: 1,
+      role: 'status',
+      text: 'Nekodex is ready. Type /help for commands or ask for a code change.'
+    }
+  ]
+}
+
+function toPersistedTranscriptItems(items: TranscriptItem[]): PersistedTranscriptItem[] {
+  return items.map((item) => ({
+    role: item.role,
+    text: item.text
+  }))
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

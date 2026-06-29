@@ -48,7 +48,8 @@ describe('instructions', () => {
       envValue: ''
     })
 
-    expect(instructions).toContain('Custom instruction files')
+    expect(instructions).toContain('# AGENTS.md instructions for .nekodex')
+    expect(instructions).toContain('<INSTRUCTIONS>')
     expect(instructions).toContain('Use short final answers.')
   })
 })

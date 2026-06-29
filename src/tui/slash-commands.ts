@@ -21,9 +21,9 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     usage: '/effort <none|low|medium|high|xhigh>'
   },
   {
-    name: 'instructions',
-    aliases: ['custom'],
-    description: 'show project and personal instruction files'
+    name: 'skills',
+    aliases: ['instructions', 'custom'],
+    description: 'show project, personal, and skill instruction files'
   },
   {
     name: 'permissions',

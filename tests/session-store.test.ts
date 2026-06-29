@@ -4,7 +4,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { ConfigStore } from '../src/config/store.js'
 import { MAX_SESSION_HISTORY_ITEMS } from '../src/constants.js'
-import { SessionStore } from '../src/session/store.js'
+import { SessionStore, transcriptFromSession } from '../src/session/store.js'
 
 describe('SessionStore', () => {
   let homeDir: string
@@ -67,6 +67,90 @@ describe('SessionStore', () => {
     const session = await sessionStore.load(workspaceRoot)
     expect(session?.conversationItems).toHaveLength(MAX_SESSION_HISTORY_ITEMS)
     expect(session?.conversationItems[0]).toEqual({ index: 5 })
+  })
+
+  it('persists visible TUI transcript content for resume', async () => {
+    const workspaceRoot = path.join(homeDir, 'workspace')
+    const session = await sessionStore.ensure(workspaceRoot)
+
+    await sessionStore.saveTranscript(workspaceRoot, session.id, [
+      { role: 'user', text: 'make a snake game' },
+      { role: 'assistant', text: 'Created script.js.' }
+    ])
+
+    await expect(sessionStore.loadById(session.id)).resolves.toMatchObject({
+      uiTranscript: [
+        { role: 'user', text: 'make a snake game' },
+        { role: 'assistant', text: 'Created script.js.' }
+      ]
+    })
+  })
+
+  it('keeps visible transcript content when conversation history is saved', async () => {
+    const workspaceRoot = path.join(homeDir, 'workspace')
+    const id = await sessionStore.save(workspaceRoot, {
+      conversationItems: [],
+      uiTranscript: [{ role: 'assistant', text: 'hello' }]
+    })
+
+    await sessionStore.save(workspaceRoot, {
+      id,
+      conversationItems: [{ type: 'message', role: 'user', content: [] }]
+    })
+
+    const session = await sessionStore.loadById(id)
+    expect(session?.uiTranscript).toEqual([{ role: 'assistant', text: 'hello' }])
+  })
+
+  it('preserves transcript and conversation content across overlapping writes', async () => {
+    const workspaceRoot = path.join(homeDir, 'workspace')
+    const session = await sessionStore.ensure(workspaceRoot)
+    const conversationItems = [{ type: 'message', role: 'user', content: [] }]
+    const uiTranscript = [{ role: 'user' as const, text: 'hello' }]
+
+    await Promise.all([
+      sessionStore.saveTranscript(workspaceRoot, session.id, uiTranscript),
+      sessionStore.save(workspaceRoot, {
+        id: session.id,
+        previousResponseId: 'resp-456',
+        conversationItems
+      })
+    ])
+
+    const savedSession = await sessionStore.loadById(session.id)
+    expect(savedSession?.conversationItems).toEqual(conversationItems)
+    expect(savedSession?.uiTranscript).toEqual(uiTranscript)
+    expect(savedSession?.previousResponseId).toBe('resp-456')
+  })
+
+  it('reconstructs a transcript from storeless conversation history', () => {
+    const transcript = transcriptFromSession({
+      id: 'abc123',
+      workspaceRoot: homeDir,
+      updatedAt: new Date().toISOString(),
+      conversationItems: [
+        {
+          type: 'message',
+          role: 'user',
+          content: [{ type: 'input_text', text: 'hello' }]
+        },
+        {
+          type: 'function_call',
+          name: 'list_files'
+        },
+        {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'hi there' }]
+        }
+      ]
+    })
+
+    expect(transcript).toEqual([
+      { role: 'user', text: 'hello' },
+      { role: 'tool', text: 'tool: list_files' },
+      { role: 'assistant', text: 'hi there' }
+    ])
   })
 
   it('clears workspace sessions', async () => {
