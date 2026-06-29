@@ -26,6 +26,18 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     description: 'show project and personal instruction files'
   },
   {
+    name: 'permissions',
+    description: 'show approval and sandbox settings'
+  },
+  {
+    name: 'diff',
+    description: 'show git status and diff summary'
+  },
+  {
+    name: 'compact',
+    description: 'show context compaction settings'
+  },
+  {
     name: 'help',
     description: 'show slash commands'
   },

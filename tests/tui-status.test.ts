@@ -72,6 +72,7 @@ function fakeAuthManager(
 function fakeSessionStore(conversationItems: unknown[]): TuiStatusSessionStore {
   const session: PersistedSession = {
     conversationItems,
+    id: 'session-123',
     updatedAt: new Date(0).toISOString(),
     workspaceRoot: '/workspace'
   }

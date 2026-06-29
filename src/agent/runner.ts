@@ -27,6 +27,7 @@ export interface AgentRunnerOptions {
   authManager: AuthManager
   config: NekodexConfig
   workspaceRoot: string
+  sessionId?: string
   memoryStore?: MemoryStore
   sessionStore?: SessionStore
   model?: string
@@ -44,6 +45,7 @@ export class AgentRunner {
   private conversationItems: unknown[] = []
   private isSessionLoaded = false
   private previousResponseId: string | undefined
+  private sessionId: string | undefined
   private readonly client: ResponsesClient
   private readonly toolRegistry = ToolRegistry.withDefaultTools()
 
@@ -129,6 +131,7 @@ export class AgentRunner {
           workspaceRoot: path.resolve(this.options.workspaceRoot),
           approvalMode: this.options.approvalMode ?? this.options.config.approvalMode,
           sandboxMode: this.options.config.sandboxMode,
+          sandboxBackend: this.options.config.sandboxBackend,
           allowOutsideWorkspace: this.options.config.allowOutsideWorkspace,
           openAiToken: auth.token,
           openAiBaseUrl: this.options.config.openaiBaseUrl,
@@ -164,19 +167,24 @@ export class AgentRunner {
       return
     }
     this.isSessionLoaded = true
-    const session = await this.options.sessionStore?.load(this.options.workspaceRoot)
+    const session = this.options.sessionId
+      ? await this.options.sessionStore?.loadById(this.options.sessionId)
+      : await this.options.sessionStore?.load(this.options.workspaceRoot)
     if (!session) {
       return
     }
+    this.sessionId = session.id
     this.previousResponseId = session.previousResponseId
     this.conversationItems = sanitizeStorelessHistoryItems(session.conversationItems)
   }
 
   private async saveSession(): Promise<void> {
-    await this.options.sessionStore?.save(this.options.workspaceRoot, {
+    const sessionId = await this.options.sessionStore?.save(this.options.workspaceRoot, {
+      id: this.sessionId ?? this.options.sessionId,
       previousResponseId: this.previousResponseId,
       conversationItems: this.conversationItems
     })
+    this.sessionId = sessionId ?? this.sessionId
   }
 
   private readonly writeAssistantText = (text: string): void => {

@@ -1,6 +1,6 @@
 import { createInterface } from 'node:readline'
 import { APP_VERSION } from '../constants.js'
-import type { ApprovalMode, SandboxMode } from '../config/schema.js'
+import type { ApprovalMode, SandboxBackend, SandboxMode } from '../config/schema.js'
 import { ToolRegistry } from '../tools/registry.js'
 
 interface JsonRpcRequest {
@@ -19,6 +19,7 @@ export interface McpServerOptions {
   workspaceRoot: string
   approvalMode: ApprovalMode
   sandboxMode: SandboxMode
+  sandboxBackend?: SandboxBackend
   allowOutsideWorkspace: boolean
 }
 
@@ -87,6 +88,7 @@ async function handleRequest(
       workspaceRoot: options.workspaceRoot,
       approvalMode: options.approvalMode,
       sandboxMode: options.sandboxMode,
+      sandboxBackend: options.sandboxBackend,
       allowOutsideWorkspace: options.allowOutsideWorkspace
     })
 

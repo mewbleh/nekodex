@@ -3,6 +3,7 @@ import type {
   ApprovalMode,
   NekodexConfig,
   ReasoningEffort,
+  SandboxBackend,
   SandboxMode,
   StoredAuth
 } from './config/schema.js'
@@ -27,6 +28,9 @@ export function parseConfigPatch(key: string, value: string): ConfigPatch {
   }
   if (key === 'sandboxMode') {
     return { sandboxMode: value as SandboxMode }
+  }
+  if (key === 'sandboxBackend') {
+    return { sandboxBackend: value as SandboxBackend }
   }
   if (key === 'allowOutsideWorkspace') {
     return { allowOutsideWorkspace: parseBooleanValue(key, value) }

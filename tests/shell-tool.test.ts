@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { buildBwrapArgs, shouldAttemptBwrap } from '../src/tools/bwrap.js'
 import { runCommandTool } from '../src/tools/shell.js'
 import type { ToolExecutionContext } from '../src/tools/types.js'
 
@@ -44,5 +45,25 @@ describe('runCommandTool sandboxing', () => {
         context
       )
     ).rejects.toThrow('outside workspace')
+  })
+
+  it('does not auto-enable bwrap on Termux', () => {
+    expect(
+      shouldAttemptBwrap(
+        { ...context, sandboxBackend: 'auto' },
+        { TERMUX_VERSION: '1' },
+        'linux'
+      )
+    ).toBe(false)
+  })
+
+  it('builds bwrap arguments with read-only root and writable workspace', () => {
+    expect(
+      buildBwrapArgs({
+        command: 'echo hi',
+        cwd: workspaceRoot,
+        workspaceRoot
+      })
+    ).toContain('--bind')
   })
 })

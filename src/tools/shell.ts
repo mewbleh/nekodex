@@ -3,6 +3,7 @@ import { DEFAULT_COMMAND_TIMEOUT_MS } from '../constants.js'
 import type { AgentTool, ToolResult } from './types.js'
 import { resolveWorkspacePath } from './path-utils.js'
 import { assertCanRunCommand, canResolveShellCwdOutsideWorkspace } from './sandbox.js'
+import { buildBwrapArgs, resolveShellSandboxBackend } from './bwrap.js'
 
 export const runCommandTool: AgentTool<{
   command: string
@@ -34,18 +35,37 @@ export const runCommandTool: AgentTool<{
       canResolveShellCwdOutsideWorkspace(context)
     )
     assertCanRunCommand(context, cwd)
-    return runShellCommand(input.command, cwd, input.timeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS)
+    const sandboxBackend = await resolveShellSandboxBackend(context)
+    return runShellCommand(
+      input.command,
+      cwd,
+      input.timeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS,
+      sandboxBackend,
+      context.workspaceRoot
+    )
   }
 }
 
-function runShellCommand(command: string, cwd: string, timeoutMs: number): Promise<ToolResult> {
+function runShellCommand(
+  command: string,
+  cwd: string,
+  timeoutMs: number,
+  sandboxBackend: 'bwrap' | 'node',
+  workspaceRoot: string
+): Promise<ToolResult> {
   return new Promise((resolve) => {
-    const child = spawn(command, {
-      cwd,
-      shell: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      windowsHide: true
-    })
+    const child =
+      sandboxBackend === 'bwrap'
+        ? spawn('bwrap', buildBwrapArgs({ command, cwd, workspaceRoot }), {
+            stdio: ['ignore', 'pipe', 'pipe'],
+            windowsHide: true
+          })
+        : spawn(command, {
+            cwd,
+            shell: true,
+            stdio: ['ignore', 'pipe', 'pipe'],
+            windowsHide: true
+          })
     const stdoutChunks: Buffer[] = []
     const stderrChunks: Buffer[] = []
     let didTimeout = false
@@ -71,6 +91,7 @@ function runShellCommand(command: string, cwd: string, timeoutMs: number): Promi
           signal,
           stdout: trimCommandOutput(stdout),
           stderr: trimCommandOutput(stderr),
+          sandboxBackend,
           timedOut: didTimeout
         },
         error: didTimeout ? `Command timed out after ${timeoutMs}ms.` : undefined

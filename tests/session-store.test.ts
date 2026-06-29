@@ -28,9 +28,31 @@ describe('SessionStore', () => {
     })
 
     await expect(sessionStore.load(workspaceRoot)).resolves.toMatchObject({
+      id: expect.any(String),
       previousResponseId: 'resp-123',
       workspaceRoot: path.resolve(workspaceRoot),
       conversationItems: [{ type: 'message', role: 'user', content: [] }]
+    })
+  })
+
+  it('loads sessions by id for resume', async () => {
+    const workspaceRoot = path.join(homeDir, 'workspace')
+    const id = await sessionStore.save(workspaceRoot, { conversationItems: [] })
+
+    await expect(sessionStore.loadById(id)).resolves.toMatchObject({
+      id,
+      workspaceRoot: path.resolve(workspaceRoot)
+    })
+  })
+
+  it('ensures a workspace has a session id', async () => {
+    const workspaceRoot = path.join(homeDir, 'workspace')
+
+    const session = await sessionStore.ensure(workspaceRoot)
+
+    expect(session.id).toMatch(/^[a-f0-9]{12}$/)
+    await expect(sessionStore.loadById(session.id)).resolves.toMatchObject({
+      workspaceRoot: path.resolve(workspaceRoot)
     })
   })
 

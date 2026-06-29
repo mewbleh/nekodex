@@ -7,16 +7,17 @@ project instructions, memories, tool approvals, and OpenAI Responses models.
 ## Highlights
 
 - Codex-like React/Ink TUI with transcript history, bottom composer, slash
-  commands, model picker, approval prompts, and compact status line
+  commands, startup splash, model picker, approval prompts, and compact status
+  line
 - Auth with OpenAI API keys, ChatGPT browser login, or ChatGPT device-code login
 - Workspace tools for listing files, reading files, writing files, text
   replacement, search, shell commands, and image generation
 - Project and personal custom instructions from `AGENTS.md`, `SKILL.md`,
   `.nekodex/instructions.md`, Nekodex home, or `NEKODEX_INSTRUCTIONS`
-- Persistent memories and chat sessions
+- Persistent memories and resumable chat sessions
 - Automatic context-window compaction for long sessions
-- Configurable model, reasoning effort, approval mode, sandbox mode, hosted
-  OpenAI tools, and remote MCP servers
+- Configurable model, reasoning effort, approval mode, sandbox mode, sandbox
+  backend, hosted OpenAI tools, and remote MCP servers
 - Local stdio MCP server mode for exposing Nekodex workspace tools
 - Linux, macOS, Windows, and Android Termux support
 
@@ -90,6 +91,19 @@ Use readline mode instead of the TUI:
 nekodex --plain
 ```
 
+When the TUI exits, Nekodex clears the terminal and prints the session id:
+
+```text
+Nekodex session 4f3a8c91d21b
+Resume with: nekodex resume 4f3a8c91d21b
+```
+
+Resume that session later:
+
+```bash
+nekodex resume 4f3a8c91d21b
+```
+
 ## TUI Commands
 
 Inside the TUI, type `/` to open command suggestions.
@@ -100,6 +114,9 @@ Inside the TUI, type `/` to open command suggestions.
 /model gpt-5.5   switch model immediately
 /effort          open the reasoning-effort picker
 /instructions    show loaded custom instruction files
+/permissions     show approval and sandbox settings
+/diff            show git status and diff summary
+/compact         show context compaction settings
 /clear           clear the visible transcript
 /help            show all slash commands
 /exit            quit
@@ -216,6 +233,19 @@ nekodex --sandbox workspace-write  # allow workspace writes
 nekodex --danger-full-access       # allow outside-workspace access
 ```
 
+Sandbox backends:
+
+```bash
+nekodex --sandbox-backend auto   # default; use bwrap when it is available and safe
+nekodex --sandbox-backend node   # JS path checks only
+nekodex --sandbox-backend bwrap  # require Linux bubblewrap
+nekodex --sandbox-backend none   # no process sandbox backend
+```
+
+`bwrap` is only used for `workspace-write` shell commands. In `auto` mode it is
+attempted on Linux when Bubblewrap is installed and skipped on Termux, macOS,
+and Windows. File tools still use Nekodex path checks.
+
 Configure hosted OpenAI tools:
 
 ```bash
@@ -255,6 +285,7 @@ Inspect and edit local config:
 nekodex config show
 nekodex config set approvalMode ask
 nekodex config set sandboxMode workspace-write
+nekodex config set sandboxBackend auto
 nekodex config set contextWindow.autoCompact true
 nekodex config set contextWindow.compactThresholdTokens 200000
 ```

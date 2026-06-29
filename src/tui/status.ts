@@ -51,7 +51,7 @@ export async function buildTuiStatus(options: BuildTuiStatusOptions): Promise<st
     `context: ${contextMode}, approx ${formatNumber(approxTokens)} / ${formatNumber(compactThresholdTokens)} tokens, ${formatNumber(conversationItems.length)} session items`,
     `instructions: ${formatInstructionSourcesForStatus(instructionSources)}`,
     `approval: ${options.approvalMode ?? options.config.approvalMode}`,
-    `sandbox: ${options.config.sandboxMode}`
+    `sandbox: ${options.config.sandboxMode} (${options.config.sandboxBackend})`
   ].join('\n')
 }
 

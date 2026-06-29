@@ -7,7 +7,13 @@ import { stdin as input, stdout as output } from 'node:process'
 import { Command } from 'commander'
 import { AuthManager, maskSecret } from './auth/manager.js'
 import { ConfigStore } from './config/store.js'
-import type { ApprovalMode, NekodexConfig, ReasoningEffort, SandboxMode } from './config/schema.js'
+import type {
+  ApprovalMode,
+  NekodexConfig,
+  ReasoningEffort,
+  SandboxBackend,
+  SandboxMode
+} from './config/schema.js'
 import { APP_VERSION, DEFAULT_AUTH_ISSUER, OAUTH_CLIENT_ID } from './constants.js'
 import { AgentRunner } from './agent/runner.js'
 import { NekodexError } from './errors.js'
@@ -38,6 +44,7 @@ program
   .option('--reasoning-effort <effort>', 'reasoning effort: none, low, medium, high, xhigh')
   .option('-y, --yes', 'approve tool calls automatically')
   .option('--sandbox <mode>', 'sandbox mode: read-only, workspace-write, danger-full-access')
+  .option('--sandbox-backend <backend>', 'sandbox backend: auto, node, bwrap, none')
   .option('--danger-full-access', 'disable workspace sandbox restrictions')
   .option('--plain', 'use the simple readline chat instead of the TUI')
   .argument('[prompt...]', 'prompt to run')
@@ -54,6 +61,7 @@ program
   .option('--reasoning-effort <effort>', 'reasoning effort: none, low, medium, high, xhigh')
   .option('-y, --yes', 'approve tool calls automatically')
   .option('--sandbox <mode>', 'sandbox mode: read-only, workspace-write, danger-full-access')
+  .option('--sandbox-backend <backend>', 'sandbox backend: auto, node, bwrap, none')
   .option('--danger-full-access', 'disable workspace sandbox restrictions')
   .option('--plain', 'use the simple readline chat instead of the TUI')
   .argument('[prompt...]', 'prompt to run')
@@ -70,14 +78,48 @@ program
   .option('--reasoning-effort <effort>', 'reasoning effort: none, low, medium, high, xhigh')
   .option('-y, --yes', 'approve tool calls automatically')
   .option('--sandbox <mode>', 'sandbox mode: read-only, workspace-write, danger-full-access')
+  .option('--sandbox-backend <backend>', 'sandbox backend: auto, node, bwrap, none')
   .option('--danger-full-access', 'disable workspace sandbox restrictions')
   .action(async (options: RootOptions) => {
     const store = new ConfigStore()
     const config = resolveRuntimeConfig(await store.loadConfig(), options)
+    const workspaceRoot = path.resolve(options.cwd)
+    const sessionStore = new SessionStore(store)
+    const session = await sessionStore.ensure(workspaceRoot)
     startTui({
       configStore: store,
       config,
-      workspaceRoot: path.resolve(options.cwd),
+      workspaceRoot,
+      sessionId: session.id,
+      model: options.model,
+      approvalMode: options.yes ? 'auto' : config.approvalMode
+    })
+  })
+
+program
+  .command('resume')
+  .description('Resume a saved Nekodex TUI session by id.')
+  .argument('<id>', 'session id')
+  .option('-m, --model <model>', 'model to use')
+  .option('--effort <effort>', 'reasoning effort: none, low, medium, high, xhigh')
+  .option('--reasoning-effort <effort>', 'reasoning effort: none, low, medium, high, xhigh')
+  .option('-y, --yes', 'approve tool calls automatically')
+  .option('--sandbox <mode>', 'sandbox mode: read-only, workspace-write, danger-full-access')
+  .option('--sandbox-backend <backend>', 'sandbox backend: auto, node, bwrap, none')
+  .option('--danger-full-access', 'disable workspace sandbox restrictions')
+  .action(async (id: string, options: Omit<RootOptions, 'cwd'>) => {
+    const store = new ConfigStore()
+    const sessionStore = new SessionStore(store)
+    const session = await sessionStore.loadById(id)
+    if (!session) {
+      throw new Error(`Session not found: ${id}`)
+    }
+    const config = resolveRuntimeConfig(await store.loadConfig(), options)
+    startTui({
+      configStore: store,
+      config,
+      workspaceRoot: session.workspaceRoot,
+      sessionId: session.id,
       model: options.model,
       approvalMode: options.yes ? 'auto' : config.approvalMode
     })
@@ -385,14 +427,16 @@ mcp
   .option('-C, --cwd <path>', 'workspace directory', process.cwd())
   .option('--approval <mode>', 'approval mode: ask or auto')
   .option('--sandbox <mode>', 'sandbox mode: read-only, workspace-write, danger-full-access')
+  .option('--sandbox-backend <backend>', 'sandbox backend: auto, node, bwrap, none')
   .option('--danger-full-access', 'disable workspace sandbox restrictions')
-  .action(async (options: { cwd: string; approval?: ApprovalMode; sandbox?: string; dangerFullAccess?: boolean }) => {
+  .action(async (options: { cwd: string; approval?: ApprovalMode; sandbox?: string; sandboxBackend?: string; dangerFullAccess?: boolean }) => {
     const store = new ConfigStore()
     const current = resolveRuntimeConfig(await store.loadConfig(), options)
     await serveMcp({
       workspaceRoot: path.resolve(options.cwd),
       approvalMode: options.approval ?? current.approvalMode,
       sandboxMode: current.sandboxMode,
+      sandboxBackend: current.sandboxBackend,
       allowOutsideWorkspace: current.allowOutsideWorkspace
     })
   })
@@ -404,6 +448,7 @@ interface RootOptions {
   reasoningEffort?: string
   yes?: boolean
   sandbox?: string
+  sandboxBackend?: string
   dangerFullAccess?: boolean
   plain?: boolean
 }
@@ -420,12 +465,13 @@ async function runChat(prompt: string, options: RootOptions): Promise<void> {
   const store = new ConfigStore()
   const config = resolveRuntimeConfig(await store.loadConfig(), options)
   const workspaceRoot = path.resolve(options.cwd)
+  const sessionStore = new SessionStore(store)
   const runner = new AgentRunner({
     authManager: new AuthManager(store),
     config,
     workspaceRoot,
     memoryStore: new MemoryStore(store),
-    sessionStore: new SessionStore(store),
+    sessionStore,
     model: options.model,
     approvalMode: options.yes ? 'auto' : config.approvalMode
   })
@@ -436,10 +482,12 @@ async function runChat(prompt: string, options: RootOptions): Promise<void> {
   }
 
   if (!options.plain && process.stdout.isTTY && process.stdin.isTTY) {
+    const session = await sessionStore.ensure(workspaceRoot)
     startTui({
       configStore: store,
       config,
       workspaceRoot,
+      sessionId: session.id,
       model: options.model,
       approvalMode: options.yes ? 'auto' : config.approvalMode
     })
@@ -456,10 +504,16 @@ function resolveRuntimeConfig(
     effort?: string
     reasoningEffort?: string
     sandbox?: string
+    sandboxBackend?: string
   }
 ): NekodexConfig {
   const reasoningEffort = resolveReasoningEffortOption(options)
-  const nextConfig = reasoningEffort ? { ...config, reasoningEffort } : config
+  const backendConfig = resolveSandboxBackendOption(options.sandboxBackend)
+  const nextConfig = {
+    ...config,
+    ...(reasoningEffort ? { reasoningEffort } : {}),
+    ...(backendConfig ? { sandboxBackend: backendConfig } : {})
+  }
 
   if (options.dangerFullAccess) {
     return { ...nextConfig, sandboxMode: 'danger-full-access' }
@@ -475,6 +529,20 @@ function resolveRuntimeConfig(
 
 function isSandboxMode(value: string): value is SandboxMode {
   return value === 'read-only' || value === 'workspace-write' || value === 'danger-full-access'
+}
+
+function resolveSandboxBackendOption(value: string | undefined): SandboxBackend | undefined {
+  if (!value) {
+    return undefined
+  }
+  if (!isSandboxBackend(value)) {
+    throw new Error(`Unsupported sandbox backend: ${value}`)
+  }
+  return value
+}
+
+function isSandboxBackend(value: string): value is SandboxBackend {
+  return value === 'auto' || value === 'node' || value === 'bwrap' || value === 'none'
 }
 
 function resolveReasoningEffortOption(options: {

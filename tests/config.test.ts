@@ -15,4 +15,12 @@ describe('config schema', () => {
   it('builds a reasoning effort config patch from CLI config set', () => {
     expect(parseConfigPatch('reasoningEffort', 'low')).toEqual({ reasoningEffort: 'low' })
   })
+
+  it('defaults sandbox backend to auto', () => {
+    expect(configSchema.parse({}).sandboxBackend).toBe('auto')
+  })
+
+  it('builds a sandbox backend config patch from CLI config set', () => {
+    expect(parseConfigPatch('sandboxBackend', 'bwrap')).toEqual({ sandboxBackend: 'bwrap' })
+  })
 })

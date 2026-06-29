@@ -1,4 +1,6 @@
 import path from 'node:path'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { Box, Text, render, useApp, useInput, useStdout } from 'ink'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { listInstructionSources } from '../agent/instructions.js'
@@ -21,6 +23,7 @@ import { parseTranscriptBlocks } from './markdown.js'
 import { buildTuiStatus } from './status.js'
 
 const ANIMATION_INTERVAL_MS = 120
+const execFileAsync = promisify(execFile)
 const ANIMATION_FRAMES = ['-', '\\', '|', '/']
 const APPROVAL_DETAIL_ROWS = 5
 const MAX_TRANSCRIPT_ITEMS = 80
@@ -94,12 +97,30 @@ export interface TuiOptions {
   configStore: ConfigStore
   config: NekodexConfig
   workspaceRoot: string
+  sessionId: string
   model?: string
   approvalMode?: 'ask' | 'auto'
 }
 
 export function startTui(options: TuiOptions): void {
-  render(<NekodexTui options={options} />)
+  const app = render(<NekodexTui options={options} />)
+  void app.waitUntilExit().then(() => {
+    clearTerminal()
+    process.stdout.write(
+      [
+        `Nekodex session ${options.sessionId}`,
+        `Resume with: nekodex resume ${options.sessionId}`,
+        ''
+      ].join('\n')
+    )
+  })
+}
+
+function clearTerminal(): void {
+  if (!process.stdout.isTTY) {
+    return
+  }
+  process.stdout.write('\x1b[2J\x1b[3J\x1b[H')
 }
 
 function NekodexTui({ options }: { options: TuiOptions }) {
@@ -264,6 +285,7 @@ function NekodexTui({ options }: { options: TuiOptions }) {
       authManager: authManagerRef.current,
       config: runtimeConfig,
       workspaceRoot: options.workspaceRoot,
+      sessionId: options.sessionId,
       memoryStore: new MemoryStore(options.configStore),
       sessionStore: sessionStoreRef.current,
       model: activeModel,
@@ -375,6 +397,35 @@ function NekodexTui({ options }: { options: TuiOptions }) {
         const instructionSources = await listInstructionSources(options.workspaceRoot)
         setInstructionCount(instructionSources.length)
         appendTranscript('status', formatInstructionSources(instructionSources, options.workspaceRoot))
+        return
+      }
+
+      if (command?.name === 'permissions') {
+        appendTranscript(
+          'status',
+          [
+            `approval: ${options.approvalMode ?? runtimeConfig.approvalMode}`,
+            `sandbox: ${runtimeConfig.sandboxMode}`,
+            `sandbox backend: ${runtimeConfig.sandboxBackend}`,
+            `outside-workspace reads: ${runtimeConfig.allowOutsideWorkspace ? 'allowed' : 'blocked'}`
+          ].join('\n')
+        )
+        return
+      }
+
+      if (command?.name === 'compact') {
+        appendTranscript(
+          'status',
+          [
+            `context compaction: ${runtimeConfig.contextWindow.autoCompact ? 'auto' : 'manual'}`,
+            `threshold: ${runtimeConfig.contextWindow.compactThresholdTokens.toLocaleString()} tokens`
+          ].join('\n')
+        )
+        return
+      }
+
+      if (command?.name === 'diff') {
+        appendTranscript('status', await buildGitDiffSummary(options.workspaceRoot))
         return
       }
 
@@ -603,6 +654,10 @@ function NekodexTui({ options }: { options: TuiOptions }) {
     : 0
   const activityRows = isRunning || status !== 'Ready' ? 1 : 0
   const composerRows = pendingApproval || activeSelection ? 0 : 2
+  const hasConversation = transcript.some((item) =>
+    ['assistant', 'error', 'tool', 'user'].includes(item.role)
+  )
+  const showSplash = !hasConversation
   const transcriptHeight = Math.max(
     MIN_TRANSCRIPT_HEIGHT,
     dimensions.rows -
@@ -614,19 +669,28 @@ function NekodexTui({ options }: { options: TuiOptions }) {
       composerRows
   )
   const visibleTranscript = useMemo(
-    () => transcript.slice(-transcriptHeight),
-    [transcript, transcriptHeight]
+    () => (showSplash ? [] : transcript.slice(-transcriptHeight)),
+    [showSplash, transcript, transcriptHeight]
   )
   const workspaceLabel = compactPath(options.workspaceRoot, dimensions.columns)
   const frame = ANIMATION_FRAMES[frameIndex % ANIMATION_FRAMES.length]
   const approvalMode = options.approvalMode ?? runtimeConfig.approvalMode
   const contextMode = runtimeConfig.contextWindow.autoCompact ? 'auto' : 'manual'
   const reasoningEffort = runtimeConfig.reasoningEffort
+  const sandboxBackend = runtimeConfig.sandboxBackend
   const sandboxMode = runtimeConfig.sandboxMode
 
   return (
     <Box flexDirection="column" paddingX={1}>
       <Box flexDirection="column" height={transcriptHeight}>
+        {showSplash ? (
+          <SplashPanel
+            contextMode={contextMode}
+            model={activeModel}
+            sessionId={options.sessionId}
+            workspaceLabel={workspaceLabel}
+          />
+        ) : null}
         {visibleTranscript.map((item) => (
           <TranscriptLine key={item.id} item={item} width={dimensions.columns - 8} />
         ))}
@@ -658,6 +722,7 @@ function NekodexTui({ options }: { options: TuiOptions }) {
         isRunning={isRunning}
         model={activeModel}
         reasoningEffort={reasoningEffort}
+        sandboxBackend={sandboxBackend}
         sandboxMode={sandboxMode}
         width={dimensions.columns - 2}
         workspaceLabel={workspaceLabel}
@@ -721,6 +786,32 @@ function buildTranscriptRows(
   }
 
   return rows.length > 0 ? rows : [{ color: bodyColor, text: '' }]
+}
+
+function SplashPanel({
+  contextMode,
+  model,
+  sessionId,
+  workspaceLabel
+}: {
+  contextMode: string
+  model: string
+  sessionId: string
+  workspaceLabel: string
+}) {
+  return (
+    <Box flexDirection="column" marginTop={1}>
+      <Text color="cyan" bold>  Nekodex</Text>
+      <Text color="gray">  Lightweight agentic coding in your terminal</Text>
+      <Text> </Text>
+      <Text color="gray">  model {model} {DOT_MARK} context {contextMode} {DOT_MARK} cwd {workspaceLabel}</Text>
+      <Text color="gray">  session {sessionId} {DOT_MARK} resume with nekodex resume {sessionId}</Text>
+      <Text> </Text>
+      <Text color="gray">  /model        choose model and reasoning effort</Text>
+      <Text color="gray">  /status       show auth, sandbox, context, and instructions</Text>
+      <Text color="gray">  /instructions show custom instruction files</Text>
+    </Box>
+  )
 }
 
 function ActivityLine({
@@ -871,6 +962,7 @@ function Footer({
   isRunning,
   model,
   reasoningEffort,
+  sandboxBackend,
   sandboxMode,
   width,
   workspaceLabel
@@ -881,13 +973,14 @@ function Footer({
   isRunning: boolean
   model: string
   reasoningEffort: string
+  sandboxBackend: string
   sandboxMode: string
   width: number
   workspaceLabel: string
 }) {
   const modeHint = isRunning ? 'Esc to interrupt' : '/help for commands'
   const statusLine = truncateLine(
-    `${model} ${reasoningEffort} ${DOT_MARK} Context ${contextMode} ${DOT_MARK} ${workspaceLabel} ${DOT_MARK} approval ${approvalMode} ${DOT_MARK} sandbox ${sandboxMode} ${DOT_MARK} instructions ${instructionCount} ${DOT_MARK} ${modeHint} ${DOT_MARK} v${APP_VERSION}`,
+    `${model} ${reasoningEffort} ${DOT_MARK} Context ${contextMode} ${DOT_MARK} ${workspaceLabel} ${DOT_MARK} approval ${approvalMode} ${DOT_MARK} sandbox ${sandboxMode}/${sandboxBackend} ${DOT_MARK} instructions ${instructionCount} ${DOT_MARK} ${modeHint} ${DOT_MARK} v${APP_VERSION}`,
     width
   )
 
@@ -979,6 +1072,25 @@ function formatInstructionSources(
       return `- ${source.scope}: ${displayPath}`
     })
   ].join('\n')
+}
+
+async function buildGitDiffSummary(workspaceRoot: string): Promise<string> {
+  try {
+    const [status, diffStat] = await Promise.all([
+      execFileAsync('git', ['-C', workspaceRoot, 'status', '--short'], {
+        maxBuffer: 128_000
+      }),
+      execFileAsync('git', ['-C', workspaceRoot, 'diff', '--stat'], {
+        maxBuffer: 128_000
+      })
+    ])
+    const statusText = status.stdout.trim() || 'clean'
+    const diffText = diffStat.stdout.trim() || 'no unstaged diff'
+    return [`git status --short`, statusText, '', 'git diff --stat', diffText].join('\n')
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return `Could not read git diff: ${message}`
+  }
 }
 
 function getApprovalTitle(request: ToolApprovalRequest): string {
