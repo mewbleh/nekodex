@@ -8,12 +8,18 @@ export interface ToolExecutionContext {
   allowOutsideWorkspace: boolean
   openAiToken?: string
   openAiBaseUrl?: string
+  requestApproval?: (request: ToolApprovalRequest) => Promise<boolean>
 }
 
 export interface ToolResult {
   ok: boolean
   output?: unknown
   error?: string
+}
+
+export interface ToolApprovalRequest {
+  arguments: unknown
+  toolName: string
 }
 
 export interface AgentTool<TInput = unknown> {

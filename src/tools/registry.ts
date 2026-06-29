@@ -46,7 +46,7 @@ export class ToolRegistry {
     try {
       const parsedArguments = parseToolArguments(rawArguments)
       if (tool.requiresApproval && context.approvalMode !== 'auto') {
-        const isApproved = await askApproval(name, parsedArguments)
+        const isApproved = await requestToolApproval(context, name, parsedArguments)
         if (!isApproved) {
           return { ok: false, error: `User denied tool call: ${name}` }
         }
@@ -76,6 +76,17 @@ function parseToolArguments(rawArguments: string): unknown {
       `Tool arguments are not valid JSON: ${error instanceof Error ? error.message : String(error)}`
     )
   }
+}
+
+async function requestToolApproval(
+  context: ToolExecutionContext,
+  toolName: string,
+  argumentsValue: unknown
+): Promise<boolean> {
+  if (context.requestApproval) {
+    return context.requestApproval({ arguments: argumentsValue, toolName })
+  }
+  return askApproval(toolName, argumentsValue)
 }
 
 async function askApproval(name: string, argumentsValue: unknown): Promise<boolean> {

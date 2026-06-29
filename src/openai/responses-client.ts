@@ -199,6 +199,15 @@ function applyResponseStreamBlock(
     return undefined
   }
 
+  if (type === 'response.content_part.delta') {
+    const delta = getRecordField(event, 'delta')
+    const text = typeof delta?.text === 'string' ? delta.text : getStringField(event, 'text')
+    if (text) {
+      textParts.push(text)
+    }
+    return undefined
+  }
+
   if (type === 'response.output_text.done') {
     const text = getStringField(event, 'text')
     if (text && textParts.length === 0) {
@@ -211,6 +220,10 @@ function applyResponseStreamBlock(
     const item = getRecordField(event, 'item')
     if (item) {
       output.push(item)
+      const text = extractOutputItemText(item)
+      if (text && textParts.length === 0) {
+        textParts.push(text)
+      }
     }
     return undefined
   }
@@ -218,11 +231,19 @@ function applyResponseStreamBlock(
   if (type === 'response.completed') {
     const response = getRecordField(event, 'response')
     const completedOutput = response?.output
-    if (typeof response?.output_text === 'string' && textParts.length === 0) {
-      textParts.push(response.output_text)
-    }
     if (output.length === 0 && Array.isArray(completedOutput)) {
       output.push(...completedOutput.filter(isRecord))
+    }
+    if (textParts.length === 0) {
+      const text =
+        typeof response?.output_text === 'string'
+          ? response.output_text
+          : Array.isArray(completedOutput)
+            ? completedOutput.filter(isRecord).map(extractOutputItemText).join('')
+            : ''
+      if (text) {
+        textParts.push(text)
+      }
     }
     return typeof response?.id === 'string' ? response.id : undefined
   }
@@ -263,6 +284,17 @@ function getStringField(value: Record<string, unknown>, key: string): string | u
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function extractOutputItemText(item: Record<string, unknown>): string {
+  if (item.type !== 'message' || !Array.isArray(item.content)) {
+    return ''
+  }
+
+  return item.content
+    .filter(isRecord)
+    .map((content) => (typeof content.text === 'string' ? content.text : ''))
+    .join('')
 }
 
 async function formatResponseDetail(detail: unknown): Promise<string> {

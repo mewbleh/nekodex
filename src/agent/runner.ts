@@ -12,6 +12,7 @@ import {
 } from '../openai/responses-client.js'
 import { buildConfiguredOpenAiTools } from '../openai/tools.js'
 import { ToolRegistry } from '../tools/registry.js'
+import type { ToolApprovalRequest } from '../tools/types.js'
 import { buildContextManagement } from './context-management.js'
 import { saveResponseImages } from './generated-images.js'
 import { buildInstructions } from './instructions.js'
@@ -31,6 +32,7 @@ export interface AgentRunnerOptions {
   approvalMode?: 'ask' | 'auto'
   onAssistantText?: (text: string) => void
   onStatus?: (text: string) => void
+  onToolApproval?: (request: ToolApprovalRequest) => Promise<boolean>
 }
 
 export interface AgentRunOptions {
@@ -128,7 +130,8 @@ export class AgentRunner {
           sandboxMode: this.options.config.sandboxMode,
           allowOutsideWorkspace: this.options.config.allowOutsideWorkspace,
           openAiToken: auth.token,
-          openAiBaseUrl: this.options.config.openaiBaseUrl
+          openAiBaseUrl: this.options.config.openaiBaseUrl,
+          requestApproval: this.options.onToolApproval
         })
         outputs.push({
           type: 'function_call_output',
@@ -239,21 +242,23 @@ function getFunctionCalls(response: OpenAiResponse): ResponseFunctionCall[] {
 }
 
 function printResponseText(response: OpenAiResponse, write: (text: string) => void): void {
+  for (const text of collectResponseText(response)) {
+    write(text)
+  }
+}
+
+export function collectResponseText(response: OpenAiResponse): string[] {
   if (response.output_text) {
-    write(response.output_text)
-    return
+    return [response.output_text]
   }
 
-  for (const item of response.output ?? []) {
-    if (!isOutputMessage(item)) {
-      continue
-    }
-    for (const content of item.content ?? []) {
-      if (content.type === 'output_text' && content.text) {
-        write(content.text)
-      }
-    }
-  }
+  return (response.output ?? [])
+    .filter(isOutputMessage)
+    .flatMap((item) =>
+      (item.content ?? [])
+        .map((content) => content.text)
+        .filter((text): text is string => Boolean(text))
+    )
 }
 
 function isOutputMessage(item: unknown): item is ResponseOutputMessage {

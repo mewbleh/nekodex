@@ -134,6 +134,34 @@ describe('ResponsesClient', () => {
       writeStreamingErrorResponse
     )
   })
+
+  it('collects streamed message output text when no output_text delta is sent', async () => {
+    await withCaptureServer(
+      async (baseUrl) => {
+        const client = new ResponsesClient('https://api.openai.com/v1')
+        await expect(
+          client.createResponse(
+            {
+              token: 'chatgpt-access-token',
+              baseUrl
+            },
+            {
+              model: 'gpt-5.5',
+              instructions: 'test',
+              input: 'hello',
+              tools: [],
+              store: false,
+              stream: true
+            }
+          )
+        ).resolves.toMatchObject({
+          id: 'resp-message',
+          output_text: 'final answer'
+        })
+      },
+      writeStreamingMessageResponse
+    )
+  })
 })
 
 async function withCaptureServer(
@@ -203,6 +231,22 @@ function writeStreamingErrorResponse(response: http.ServerResponse): void {
     JSON.stringify({
       detail: 'previous_response_id is not available when store is false'
     })
+  )
+}
+
+function writeStreamingMessageResponse(response: http.ServerResponse): void {
+  response.writeHead(200, { 'Content-Type': 'text/event-stream' })
+  response.write(
+    'event: response.created\n' +
+      'data: {"type":"response.created","response":{"id":"resp-message"}}\n\n'
+  )
+  response.write(
+    'event: response.output_item.done\n' +
+      'data: {"type":"response.output_item.done","item":{"type":"message","content":[{"type":"text","text":"final answer"}]}}\n\n'
+  )
+  response.end(
+    'event: response.completed\n' +
+      'data: {"type":"response.completed","response":{"id":"resp-message"}}\n\n'
   )
 }
 

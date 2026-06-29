@@ -8,20 +8,28 @@ import type { ConfigStore } from '../config/store.js'
 import { APP_VERSION } from '../constants.js'
 import { MemoryStore } from '../memory/store.js'
 import { SessionStore } from '../session/store.js'
+import type { ToolApprovalRequest } from '../tools/types.js'
 import { buildTuiStatus } from './status.js'
 
 const ANIMATION_INTERVAL_MS = 120
 const ANIMATION_FRAMES = ['-', '\\', '|', '/']
+const APPROVAL_DETAIL_ROWS = 5
 const MAX_TRANSCRIPT_ITEMS = 80
 const MIN_TRANSCRIPT_HEIGHT = 8
-const STATIC_LAYOUT_ROWS = 5
+const STATIC_LAYOUT_ROWS = 6
 
-type TranscriptRole = 'assistant' | 'error' | 'status' | 'user'
+type TranscriptRole = 'assistant' | 'error' | 'status' | 'tool' | 'user'
 
 interface TranscriptItem {
   id: number
   role: TranscriptRole
   text: string
+}
+
+interface PendingApproval {
+  detail: string
+  id: number
+  request: ToolApprovalRequest
 }
 
 export interface TuiOptions {
@@ -43,6 +51,7 @@ function NekodexTui({ options }: { options: TuiOptions }) {
   const [status, setStatus] = useState('Ready')
   const [isRunning, setIsRunning] = useState(false)
   const [frameIndex, setFrameIndex] = useState(0)
+  const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null)
   const [transcript, setTranscript] = useState<TranscriptItem[]>([
     {
       id: 1,
@@ -52,6 +61,7 @@ function NekodexTui({ options }: { options: TuiOptions }) {
   ])
   const nextIdRef = useRef(2)
   const abortControllerRef = useRef<AbortController | null>(null)
+  const approvalResolverRef = useRef<((approved: boolean) => void) | null>(null)
   const authManagerRef = useRef<AuthManager | null>(null)
   const sessionStoreRef = useRef<SessionStore | null>(null)
   const runnerRef = useRef<AgentRunner | null>(null)
@@ -67,6 +77,38 @@ function NekodexTui({ options }: { options: TuiOptions }) {
       return [...current, nextItem].slice(-MAX_TRANSCRIPT_ITEMS)
     })
   }, [])
+
+  const requestToolApproval = useCallback(
+    async (request: ToolApprovalRequest): Promise<boolean> =>
+      new Promise((resolve) => {
+        const detail = formatToolArguments(request.arguments)
+        approvalResolverRef.current = resolve
+        setPendingApproval({
+          detail,
+          id: nextIdRef.current,
+          request
+        })
+        nextIdRef.current += 1
+        setStatus(`Approve ${request.toolName}?`)
+        appendTranscript('tool', `approval requested: ${request.toolName}\n${detail}`)
+      }),
+    [appendTranscript]
+  )
+
+  const resolvePendingApproval = useCallback(
+    (approved: boolean) => {
+      if (!pendingApproval) {
+        return
+      }
+
+      approvalResolverRef.current?.(approved)
+      approvalResolverRef.current = null
+      setPendingApproval(null)
+      setStatus(approved ? 'Approved' : 'Denied')
+      appendTranscript('tool', `${approved ? 'approved' : 'denied'}: ${pendingApproval.request.toolName}`)
+    },
+    [appendTranscript, pendingApproval]
+  )
 
   if (!authManagerRef.current) {
     authManagerRef.current = new AuthManager(options.configStore)
@@ -86,9 +128,10 @@ function NekodexTui({ options }: { options: TuiOptions }) {
       model: options.model,
       approvalMode: options.approvalMode,
       onAssistantText: (text) => appendTranscript('assistant', text),
+      onToolApproval: requestToolApproval,
       onStatus: (text) => {
         setStatus(text)
-        appendTranscript('status', text)
+        appendTranscript(text.startsWith('tool:') ? 'tool' : 'status', text)
       }
     })
   }
@@ -192,12 +235,29 @@ function NekodexTui({ options }: { options: TuiOptions }) {
 
   useInput((input, key) => {
     if (key.ctrl && input === 'c') {
+      if (pendingApproval) {
+        resolvePendingApproval(false)
+        setStatus('Stopping')
+        abortControllerRef.current?.abort()
+        return
+      }
       if (isRunning) {
         setStatus('Stopping')
         abortControllerRef.current?.abort()
         return
       }
       exit()
+      return
+    }
+    if (pendingApproval) {
+      if (key.return || input.toLowerCase() === 'y') {
+        resolvePendingApproval(true)
+        return
+      }
+      if (key.escape || input.toLowerCase() === 'n') {
+        resolvePendingApproval(false)
+        return
+      }
       return
     }
     if (key.escape) {
@@ -218,7 +278,13 @@ function NekodexTui({ options }: { options: TuiOptions }) {
   })
 
   const dimensions = getTerminalDimensions(stdout)
-  const transcriptHeight = Math.max(MIN_TRANSCRIPT_HEIGHT, dimensions.rows - STATIC_LAYOUT_ROWS)
+  const approvalRows = pendingApproval
+    ? getApprovalPanelRows(pendingApproval.detail, dimensions.columns)
+    : 0
+  const transcriptHeight = Math.max(
+    MIN_TRANSCRIPT_HEIGHT,
+    dimensions.rows - STATIC_LAYOUT_ROWS - approvalRows
+  )
   const visibleTranscript = useMemo(
     () => transcript.slice(-transcriptHeight),
     [transcript, transcriptHeight]
@@ -242,6 +308,7 @@ function NekodexTui({ options }: { options: TuiOptions }) {
         reasoningEffort={reasoningEffort}
         sandboxMode={sandboxMode}
         status={status}
+        width={dimensions.columns - 2}
         workspaceLabel={workspaceLabel}
       />
       <Box marginTop={1} flexDirection="column" height={transcriptHeight}>
@@ -249,8 +316,9 @@ function NekodexTui({ options }: { options: TuiOptions }) {
           <TranscriptLine key={item.id} item={item} width={dimensions.columns - 12} />
         ))}
       </Box>
-      <Composer prompt={prompt} isRunning={isRunning} />
-      <Footer />
+      {pendingApproval ? <ApprovalPanel approval={pendingApproval} width={dimensions.columns - 4} /> : null}
+      <Composer isApprovalPending={Boolean(pendingApproval)} prompt={prompt} isRunning={isRunning} />
+      <Footer isRunning={isRunning} />
     </Box>
   )
 }
@@ -264,6 +332,7 @@ function Header({
   reasoningEffort,
   sandboxMode,
   status,
+  width,
   workspaceLabel
 }: {
   approvalMode: string
@@ -274,32 +343,20 @@ function Header({
   reasoningEffort: string
   sandboxMode: string
   status: string
+  width: number
   workspaceLabel: string
 }) {
+  const state = isRunning ? frame : 'ok'
+  const title = truncateLine(`Nekodex v${APP_VERSION} ${state} ${status}`, width)
+  const metadata = truncateLine(
+    `cwd ${workspaceLabel} | model ${model} | approval ${approvalMode} | effort ${reasoningEffort} | sandbox ${sandboxMode} | context ${contextMode}`,
+    width
+  )
+
   return (
     <Box flexDirection="column">
-      <Box>
-        <Text color="cyan" bold>
-          Nekodex
-        </Text>
-        <Text color="gray"> v{APP_VERSION} </Text>
-        <Text color={isRunning ? 'yellow' : 'green'}>{isRunning ? frame : 'ok'}</Text>
-        <Text color="gray"> {status}</Text>
-      </Box>
-      <Box>
-        <Text color="gray">cwd</Text>
-        <Text> {workspaceLabel}</Text>
-        <Text color="gray"> | model</Text>
-        <Text> {model}</Text>
-        <Text color="gray"> | approval</Text>
-        <Text> {approvalMode}</Text>
-        <Text color="gray"> | effort</Text>
-        <Text> {reasoningEffort}</Text>
-        <Text color="gray"> | sandbox</Text>
-        <Text> {sandboxMode}</Text>
-        <Text color="gray"> | context</Text>
-        <Text> {contextMode}</Text>
-      </Box>
+      <Text color="cyan" bold>{title}</Text>
+      <Text color="gray">{metadata}</Text>
     </Box>
   )
 }
@@ -323,22 +380,62 @@ function TranscriptLine({ item, width }: { item: TranscriptItem; width: number }
   )
 }
 
-function Composer({ isRunning, prompt }: { isRunning: boolean; prompt: string }) {
+function ApprovalPanel({ approval, width }: { approval: PendingApproval; width: number }) {
+  const detailLines = wrapText(approval.detail, Math.max(24, width - 4)).slice(
+    0,
+    APPROVAL_DETAIL_ROWS
+  )
+
+  return (
+    <Box
+      borderColor="yellow"
+      borderStyle="round"
+      flexDirection="column"
+      marginTop={1}
+      paddingX={1}
+    >
+      <Text color="yellow" bold>
+        approval required: {approval.request.toolName}
+      </Text>
+      {detailLines.map((line, index) => (
+        <Text key={`${approval.id}-${index}`} color="gray">
+          {line}
+        </Text>
+      ))}
+      <Text color="gray">Y/Enter approve  N/Esc deny  Ctrl+C stop</Text>
+    </Box>
+  )
+}
+
+function Composer({
+  isApprovalPending,
+  isRunning,
+  prompt
+}: {
+  isApprovalPending: boolean
+  isRunning: boolean
+  prompt: string
+}) {
+  const placeholder = isApprovalPending ? 'answer approval above' : isRunning ? 'working...' : 'type a request'
+
   return (
     <Box marginTop={1}>
       <Text color="cyan" bold>
         {'> '}
       </Text>
       <Text>{prompt}</Text>
-      <Text color="gray">{prompt ? '' : isRunning ? 'working...' : 'type a request'}</Text>
+      <Text color="gray">{prompt ? '' : placeholder}</Text>
     </Box>
   )
 }
 
-function Footer() {
+function Footer({ isRunning }: { isRunning: boolean }) {
   return (
-    <Box marginTop={1}>
-      <Text color="gray">Enter send | Esc clear | Ctrl+C quit | /status /help /clear /exit</Text>
+    <Box flexDirection="column" marginTop={1}>
+      <Text color="gray">
+        {isRunning ? 'Enter send  Esc clear  Ctrl+C stop' : 'Enter send  Esc clear  Ctrl+C quit'}
+      </Text>
+      <Text color="gray">/status /help /clear /exit</Text>
     </Box>
   )
 }
@@ -368,6 +465,9 @@ function roleStyle(role: TranscriptRole): {
   if (role === 'error') {
     return { bodyColor: 'red', color: 'red', label: 'error' }
   }
+  if (role === 'tool') {
+    return { bodyColor: 'gray', color: 'yellow', label: 'tool' }
+  }
   return { bodyColor: 'gray', color: 'yellow', label: 'system' }
 }
 
@@ -379,7 +479,7 @@ function getTerminalDimensions(stdout: NodeJS.WriteStream): { columns: number; r
 }
 
 function compactPath(value: string, columns: number): string {
-  const maxLength = Math.max(28, Math.floor(columns * 0.42))
+  const maxLength = Math.max(12, Math.min(48, Math.floor(columns * 0.32)))
   if (value.length <= maxLength) {
     return value
   }
@@ -389,15 +489,69 @@ function compactPath(value: string, columns: number): string {
   return `...${path.sep}${tail}`
 }
 
+function formatToolArguments(value: unknown): string {
+  if (!isRecord(value)) {
+    return trimLongText(JSON.stringify(value, null, 2) ?? String(value))
+  }
+
+  if (typeof value.path === 'string' && typeof value.content === 'string') {
+    return trimLongText(
+      [`path: ${value.path}`, `content: ${Buffer.byteLength(value.content, 'utf8')} bytes`].join('\n')
+    )
+  }
+
+  if (typeof value.command === 'string') {
+    return trimLongText([`command: ${value.command}`, value.cwd ? `cwd: ${String(value.cwd)}` : ''].filter(Boolean).join('\n'))
+  }
+
+  return trimLongText(JSON.stringify(value, null, 2))
+}
+
+function getApprovalPanelRows(detail: string, columns: number): number {
+  const detailRows = wrapText(detail, Math.max(24, columns - 8)).slice(0, APPROVAL_DETAIL_ROWS)
+    .length
+  return detailRows + 5
+}
+
+function truncateLine(value: string, width: number): string {
+  const maxWidth = Math.max(8, width)
+  if (value.length <= maxWidth) {
+    return value
+  }
+  if (maxWidth <= 3) {
+    return value.slice(0, maxWidth)
+  }
+  return `${value.slice(0, maxWidth - 3)}...`
+}
+
+function trimLongText(value: string): string {
+  const maxLength = 900
+  if (value.length <= maxLength) {
+    return value
+  }
+  return `${value.slice(0, maxLength)}...`
+}
+
 function wrapText(value: string, width: number): string[] {
   const wrapped: string[] = []
+  const safeWidth = Math.max(1, width)
   for (const paragraph of value.split(/\r?\n/)) {
     let line = ''
     for (const word of paragraph.split(/\s+/)) {
       if (!word) {
         continue
       }
-      if ((line ? line.length + 1 : 0) + word.length > width) {
+      if (word.length > safeWidth) {
+        if (line) {
+          wrapped.push(line)
+          line = ''
+        }
+        const chunks = chunkWord(word, safeWidth)
+        wrapped.push(...chunks.slice(0, -1))
+        line = chunks.at(-1) ?? ''
+        continue
+      }
+      if ((line ? line.length + 1 : 0) + word.length > safeWidth) {
         if (line) {
           wrapped.push(line)
         }
@@ -409,4 +563,16 @@ function wrapText(value: string, width: number): string[] {
     wrapped.push(line)
   }
   return wrapped
+}
+
+function chunkWord(value: string, width: number): string[] {
+  const chunks: string[] = []
+  for (let index = 0; index < value.length; index += width) {
+    chunks.push(value.slice(index, index + width))
+  }
+  return chunks
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
